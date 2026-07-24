@@ -6,12 +6,12 @@
 - **OpenAI Codex**: JWT from `~/.codex/auth.json`
 - **Gemini CLI** (legacy — CLI retired 2026-06-18): OAuth from `~/.gemini/oauth_creds.json`; token refresh needs an installed Gemini CLI package or env overrides, otherwise reports ⏰ expired
 - **Google Antigravity**: OAuth tokens read from `~/.gemini/antigravity-cli/antigravity-oauth-token` (written by `agy` CLI) or `ANTIGRAVITY_REFRESH_TOKEN`; per-model quota tracking, live-verified against real install
-- **Z.AI**: API token from environment variable (`$ZAI_KEY` or `$ZAI_API_KEY`), 5h shared quota
+- **Z.AI**: API token from environment variable (`$ZAI_KEY` or `$ZAI_API_KEY`), 5h shared token quota + monthly MCP-tools quota (`mcp_quota` with per-tool breakdown & reset) + client-side peak/off-peak quota-rate indicator (`quota_rate`, ⚡3x oneline marker during peak)
 - **OpenRouter**: API token from environment variable (`$OPENROUTER_API_KEY`)
 - **Kimi K2 (Moonshot)**: API token from env var (`$MOONSHOT_API_KEY`), prepaid balance tracking
 - **Synthetic.new**: API token from env var (`$SYNTHETIC_API_KEY`), reports subscription/rolling-5h/weekly-credits buckets via `GET /v2/quotas` (free probe)
 - **Display modes**: JSON, detailed, compact one-liner, noemoji color mode; oneline distinguishes 🔑 no credentials / ⏰ expired token / ❌ real error
-- **Time windows**: 5h and 7d for Claude/Codex (Codex windows classified by `limit_window_seconds`, not slot position — weekly-only accounts return one window in the primary slot; renderer degrades gracefully to whichever window exists), 5h for Z.AI (shared across GLM models; `both` mode shows tokens%/requests%), 5h rolling + weekly credits for Synthetic.new
+- **Time windows**: 5h and 7d for Claude/Codex (Codex windows classified by `limit_window_seconds`, not slot position — weekly-only accounts return one window in the primary slot; renderer degrades gracefully to whichever window exists), 5h for Z.AI (shared across GLM models; `both` mode shows tokens%/monthly-MCP%, `--resets` there shows both countdowns), 5h rolling + weekly credits for Synthetic.new
 - **Reset countdowns** (`--resets`, alias `--timeremaining`): appends `↻` countdowns per provider in oneline (6 of 8 providers; Antigravity shows earliest model reset via `summary.next_reset_in`; OpenRouter/Kimi are prepaid balances with nothing to reset)
 - **Caching** (`--cached`, `~/.cache/cclimits/usage.json`): atomic writes (temp + rename), merge on write (no-creds/partial runs preserve prior good entries), provider filters honored on cache hits (refetch if a requested provider is missing), output labeled with cache age
 - **BYOK Support**: Explicit documentation for monitoring Aider/Continue via their underlying provider keys.
@@ -27,7 +27,7 @@
 - ✅ Research on additional providers completed (`research/ai-coding-providers.md`)
 - ✅ Providers fetched concurrently; cache hits skip all network/credential calls; transient failures fall back to <24h-old cached data with stale marker (v1.3.0)
 - ✅ Data-driven `PROVIDERS` registry — adding a provider is one registry entry + one fetch function
-- ✅ CI (GitHub Actions matrix) + automated npm publish on `v*` tags via Trusted Publishing (OIDC); 205 tests
+- ✅ CI (GitHub Actions matrix) + automated npm publish on `v*` tags via Trusted Publishing (OIDC); 226 tests
 
 ## Known Issues
 
