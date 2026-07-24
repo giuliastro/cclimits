@@ -644,6 +644,16 @@ class TestOnelineResets:
         assert "Z.AI" in out and "↻1h5m" in out
         assert "Synthetic" in out and "↻45m/3d2h" in out
 
+    def test_zai_both_mode_includes_mcp_reset(self, capsys):
+        results = {"zai": {
+            "status": "ok",
+            "token_quota": {"percentage": 30.0, "resets_in": "1h 5m"},
+            "mcp_quota": {"limit": 4000, "used": 1000, "resets_in": "6d 1h"},
+        }}
+        print_oneline(results, "both", show_resets=True)
+        out = capsys.readouterr().out
+        assert "Z.AI: 30.0%/25%" in out and "↻1h5m/6d1h" in out
+
 
 class TestOnelineCacheAge:
     """Cached oneline output is labeled with its age."""

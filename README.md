@@ -82,6 +82,9 @@ Claude: 4.0% (5h) | Codex: 0% (5h) | Z.AI: 1% (5h) | OpenRouter: $47.91 | Antigr
 
 # With reset countdowns (--resets / --timeremaining) - ↻5h-reset/7d-reset; Antigravity shows its earliest model reset
 Claude: 4.0%/10.0% ✅ ↻2h15m/3d17h | Codex: 0%/2% ✅ ↻1h05m/6d23h | Z.AI: 1% (5h) ✅ ↻3h02m | Antigravity: 3% (20 models) ✅ ↻10m
+
+# --resets in both mode also shows Z.AI's monthly MCP-tools reset as the second countdown
+Z.AI: 1%/16% ✅ ↻3h28m/5d10h
 ```
 
 Status icons: ✅ ok · ⚠️ high usage · ❌ error · 🔑 no credentials found · ⏰ token expired. Cached results (`--cached`) are suffixed with their age, e.g. `(cached 42s)`.

@@ -1831,11 +1831,13 @@ def _render_zai(data, window, use_color, show_resets=False):
     rq = data.get("mcp_quota", {})
     if window == "both" and rq.get("limit"):
         s = _fmt_both("Z.AI", str(pct), str(round(rq.get("used", 0) / rq["limit"] * 100)), use_color)
+        resets = (data["token_quota"].get("resets_in"), rq.get("resets_in"))
     else:
         s = _fmt_single("Z.AI", f"{pct}% (5h)", pct, "", use_color)
+        resets = (data["token_quota"].get("resets_in"),)
     if data.get("quota_rate", {}).get("peak"):
         s += " 3x" if use_color else " ⚡3x"
-    if show_resets and (suf := _reset_suffix(data["token_quota"].get("resets_in"))):
+    if show_resets and (suf := _reset_suffix(*resets)):
         s += f" {suf}"
     return s
 
