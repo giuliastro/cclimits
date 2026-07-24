@@ -1,5 +1,13 @@
 # Recent Deltas (Last 3-5 Changes)
 
+## 2026-07-24: Z.AI TIME_LIMIT Relabeled as Monthly MCP-Tools Quota
+
+- **Problem**: the Z.AI `TIME_LIMIT` bucket (e.g. 650/4,000) was labeled "Request Quota" under the 5h header, implying it was the 5h prompt quota. Live API inspection shows it's actually the **monthly** quota for MCP tools — `usageDetails` lists only `search-prime`/`web-reader`/`zread`, and `nextResetTime` is ~month-end, not 5h. Confirmed by Z.AI dev-pack FAQ: Web Search/Reader have a separate monthly quota (100–4,000 by tier); only the token pool is the 5h window.
+- **Fix**: JSON key `request_quota` → `mcp_quota`, now also carrying `resets_in` (`Nd Nh`) and a `tools` per-tool usage breakdown from `usageDetails`. Detailed view prints "MCP Tools (monthly):" with reset countdown and per-tool lines. Oneline `both` mode unchanged in shape (`tokens%/mcp%`).
+- **Breaking (JSON consumers)**: any consumer reading `zai.request_quota` must switch to `zai.mcp_quota`.
+- **Tests**: 219 total (updated in place) — parser assert in test_usage.py; label/breakdown asserts + `TestZaiOnelineBoth` renamed keys in test_output.py.
+- **Files**: `lib/cclimits.py`, `tests/test_usage.py`, `tests/test_output.py`, `memory-bank/deltas.md`
+
 ## 2026-07-21: --resets Flag Adds Reset Countdowns to Oneline (v1.4.0)
 
 - **Feature**: new `--resets` flag (alias `--timeremaining`) appends a compact `↻` reset countdown to each provider in `--oneline` output, e.g. `Claude: 4.0%/19.0% ✅ ↻2h15m/3d17h` (`both` mode shows `5h-reset/7d-reset`). Off by default — without the flag, output is byte-identical to before.

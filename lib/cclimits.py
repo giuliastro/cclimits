@@ -980,15 +980,33 @@ def get_zai_usage() -> dict:
                         pass
 
             elif limit_type == "TIME_LIMIT":
+                # Monthly quota for MCP tools (Web Search / Web Reader / Zread),
+                # separate from the 5h GLM token pool
                 total = limit.get("usage", 0)
                 used = limit.get("currentValue", 0)
                 remaining = limit.get("remaining", 0)
 
-                result["request_quota"] = {
+                result["mcp_quota"] = {
                     "limit": total,
                     "used": used,
                     "remaining": remaining,
                 }
+
+                if tools := limit.get("usageDetails"):
+                    result["mcp_quota"]["tools"] = {
+                        t["modelCode"]: t["usage"] for t in tools
+                        if t.get("modelCode") is not None
+                    }
+
+                if reset_ts := limit.get("nextResetTime"):
+                    try:
+                        delta = datetime.fromtimestamp(reset_ts / 1000) - datetime.now()
+                        if delta.total_seconds() > 0:
+                            days, remainder = divmod(int(delta.total_seconds()), 86400)
+                            hours = remainder // 3600
+                            result["mcp_quota"]["resets_in"] = f"{days}d {hours}h"
+                    except:
+                        pass
 
     # Get historical usage (last 7 days) for additional context
     now = datetime.now()
@@ -1568,12 +1586,16 @@ def print_section(name: str, data: dict):
         if tq.get("limit") and "used" in tq:
             print(f"    ({tq['used']:,} / {tq['limit']:,} tokens)")
 
-    if "request_quota" in data:
-        rq = data["request_quota"]
+    if "mcp_quota" in data:
+        rq = data["mcp_quota"]
         if rq.get("limit"):
-            print(f"\n  Request Quota:")
+            print(f"\n  MCP Tools (monthly):")
             print(f"    Used:      {rq['used']:,} / {rq['limit']:,}")
             print(f"    Remaining: {rq['remaining']:,}")
+            if "resets_in" in rq:
+                print(f"    Resets in: {rq['resets_in']}")
+            for tool, count in rq.get("tools", {}).items():
+                print(f"      {tool}: {count:,}")
 
     if "weekly_usage" in data:
         wu = data["weekly_usage"]
@@ -1765,7 +1787,7 @@ def _render_zai(data, window, use_color, show_resets=False):
     if not (data.get("status") == "ok" and "token_quota" in data):
         return None
     pct = data["token_quota"].get("percentage", 0)
-    rq = data.get("request_quota", {})
+    rq = data.get("mcp_quota", {})
     if window == "both" and rq.get("limit"):
         s = _fmt_both("Z.AI", str(pct), str(round(rq.get("used", 0) / rq["limit"] * 100)), use_color)
     else:

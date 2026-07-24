@@ -532,7 +532,7 @@ class TestZaiSparseQuota:
         assert result["token_quota"]["percentage"] == 1
         for absent in ("limit", "used", "remaining"):
             assert absent not in result["token_quota"]
-        assert result["request_quota"] == {"limit": 4000, "used": 0, "remaining": 4000}
+        assert result["mcp_quota"] == {"limit": 4000, "used": 0, "remaining": 4000}
 
     @patch('cclimits.get_zai_credentials')
     @patch('cclimits.http_get')

@@ -162,10 +162,12 @@ class TestPrintSection:
                 "percentage": 35.0,
                 "resets_in": "2d 5h"
             },
-            "request_quota": {
+            "mcp_quota": {
                 "limit": 1000,
                 "used": 250,
-                "remaining": 750
+                "remaining": 750,
+                "resets_in": "6d 3h",
+                "tools": {"search-prime": 200, "web-reader": 50}
             },
             "weekly_usage": {
                 "calls": 1523,
@@ -179,7 +181,8 @@ class TestPrintSection:
         assert "Token Quota:" in captured.out
         assert "35.0%" in captured.out
         assert "3,500,000 / 10,000,000" in captured.out
-        assert "Request Quota:" in captured.out
+        assert "MCP Tools (monthly):" in captured.out
+        assert "search-prime: 200" in captured.out
         assert "7-Day Historical" in captured.out
 
     def test_antigravity_model_table(self, capsys):
@@ -657,19 +660,19 @@ class TestOnelineCacheAge:
 
 
 class TestZaiOnelineBoth:
-    """In 'both' mode Z.AI shows tokens%/requests% like other dual-window providers."""
+    """In 'both' mode Z.AI shows tokens%/MCP-tools% like other dual-window providers."""
 
-    def test_both_shows_request_quota(self, capsys):
+    def test_both_shows_mcp_quota(self, capsys):
         results = {"zai": {
             "status": "ok",
             "token_quota": {"percentage": 1},
-            "request_quota": {"limit": 4000, "used": 1000, "remaining": 3000},
+            "mcp_quota": {"limit": 4000, "used": 1000, "remaining": 3000},
         }}
         print_oneline(results, "both")
         captured = capsys.readouterr()
         assert "Z.AI: 1%/25%" in captured.out
 
-    def test_both_without_request_quota_falls_back(self, capsys):
+    def test_both_without_mcp_quota_falls_back(self, capsys):
         results = {"zai": {"status": "ok", "token_quota": {"percentage": 30.0}}}
         print_oneline(results, "both")
         captured = capsys.readouterr()
@@ -679,7 +682,7 @@ class TestZaiOnelineBoth:
         results = {"zai": {
             "status": "ok",
             "token_quota": {"percentage": 30.0},
-            "request_quota": {"limit": 4000, "used": 1000},
+            "mcp_quota": {"limit": 4000, "used": 1000},
         }}
         print_oneline(results, "5h")
         captured = capsys.readouterr()
