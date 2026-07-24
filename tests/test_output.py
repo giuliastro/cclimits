@@ -172,7 +172,8 @@ class TestPrintSection:
             "weekly_usage": {
                 "calls": 1523,
                 "tokens": 4500000
-            }
+            },
+            "quota_rate": {"peak": True, "multiplier": "3x", "changes_in": "1h 5m"}
         }
 
         print_section("Z.AI (GLM-4)", data)
@@ -183,6 +184,7 @@ class TestPrintSection:
         assert "3,500,000 / 10,000,000" in captured.out
         assert "MCP Tools (monthly):" in captured.out
         assert "search-prime: 200" in captured.out
+        assert "⚡ 3x peak — ends in 1h 5m" in captured.out
         assert "7-Day Historical" in captured.out
 
     def test_antigravity_model_table(self, capsys):
@@ -687,6 +689,26 @@ class TestZaiOnelineBoth:
         print_oneline(results, "5h")
         captured = capsys.readouterr()
         assert "Z.AI: 30.0% (5h)" in captured.out
+
+    def test_peak_marker_in_oneline(self, capsys):
+        results = {"zai": {
+            "status": "ok",
+            "token_quota": {"percentage": 30.0},
+            "quota_rate": {"peak": True, "multiplier": "3x", "changes_in": "1h 0m"},
+        }}
+        print_oneline(results, "5h")
+        captured = capsys.readouterr()
+        assert "⚡3x" in captured.out
+
+    def test_no_peak_marker_offpeak(self, capsys):
+        results = {"zai": {
+            "status": "ok",
+            "token_quota": {"percentage": 30.0},
+            "quota_rate": {"peak": False, "multiplier": "1x (promo)", "changes_in": "5h 0m"},
+        }}
+        print_oneline(results, "5h")
+        captured = capsys.readouterr()
+        assert "⚡" not in captured.out.split("Z.AI")[1].split("\n")[0]
 
 
 class TestOnelineExpiredToken:

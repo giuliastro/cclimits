@@ -1,5 +1,13 @@
 # Recent Deltas (Last 3-5 Changes)
 
+## 2026-07-24: Z.AI Peak/Off-Peak Quota-Rate Indicator
+
+- **Feature**: Z.AI's peak window (14:00–18:00 UTC+8 = 06:00–10:00 UTC) and quota multiplier are computed **client-side** by `zai_quota_rate(now=None)` — no API endpoint exposes them. GLM-5.2/5-Turbo burn 3× quota at peak, 2× off-peak (promo: 1× through `ZAI_OFFPEAK_PROMO_END = 2026-09-30`; constant must be dropped/updated after that).
+- **Display**: detailed view adds `Quota Rate: ⚡ 3x peak — ends in Xh Ym` / `1x (promo) off-peak — peak in Xh Ym`; oneline appends ` ⚡3x` (` 3x` in `--noemoji`) **during peak only**; JSON gains `zai.quota_rate = {peak, multiplier, changes_in}`.
+- **Why**: user hit 429s at 1% token usage — those are dynamic concurrency limits (tightest at peak, per docs.z.ai usage-policy), invisible in the quota API. The indicator at least flags when the 3× / tight-concurrency window is active. Peak = China afternoon = 02:00–06:00 US Eastern, so overnight agent runs are the exposed ones.
+- **Tests**: 225 total (6 new) — `TestZaiQuotaRate` (peak/off-peak/promo-end/boundaries, test_usage.py); peak line + oneline marker presence/absence (test_output.py).
+- **Files**: `lib/cclimits.py`, `tests/test_usage.py`, `tests/test_output.py`, `memory-bank/deltas.md`
+
 ## 2026-07-24: Z.AI TIME_LIMIT Relabeled as Monthly MCP-Tools Quota
 
 - **Problem**: the Z.AI `TIME_LIMIT` bucket (e.g. 650/4,000) was labeled "Request Quota" under the 5h header, implying it was the 5h prompt quota. Live API inspection shows it's actually the **monthly** quota for MCP tools — `usageDetails` lists only `search-prime`/`web-reader`/`zread`, and `nextResetTime` is ~month-end, not 5h. Confirmed by Z.AI dev-pack FAQ: Web Search/Reader have a separate monthly quota (100–4,000 by tier); only the token pool is the 5h window.

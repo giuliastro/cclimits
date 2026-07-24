@@ -929,6 +929,37 @@ def get_zai_credentials() -> str | None:
     return None
 
 
+# Z.AI peak window (docs.z.ai/devpack/faq): 14:00-18:00 UTC+8 = 06:00-10:00 UTC.
+# GLM-5.2 / GLM-5-Turbo consume 3x quota during peak, 2x off-peak
+# (promo: 1x off-peak through 2026-09-30). Not exposed by any API endpoint.
+ZAI_PEAK_START_UTC = 6
+ZAI_PEAK_END_UTC = 10
+ZAI_OFFPEAK_PROMO_END = (2026, 9, 30)
+
+
+def zai_quota_rate(now: datetime | None = None) -> dict:
+    """Compute Z.AI peak/off-peak status and quota multiplier client-side."""
+    now = now or datetime.now(timezone.utc)
+    is_peak = ZAI_PEAK_START_UTC <= now.hour < ZAI_PEAK_END_UTC
+
+    if is_peak:
+        multiplier = "3x"
+        boundary = now.replace(hour=ZAI_PEAK_END_UTC, minute=0, second=0, microsecond=0)
+    else:
+        promo = (now.year, now.month, now.day) <= ZAI_OFFPEAK_PROMO_END
+        multiplier = "1x (promo)" if promo else "2x"
+        boundary = now.replace(hour=ZAI_PEAK_START_UTC, minute=0, second=0, microsecond=0)
+        if now.hour >= ZAI_PEAK_START_UTC:
+            boundary += __import__("datetime").timedelta(days=1)
+
+    hours, remainder = divmod(int((boundary - now).total_seconds()), 3600)
+    return {
+        "peak": is_peak,
+        "multiplier": multiplier,
+        "changes_in": f"{hours}h {remainder // 60}m",
+    }
+
+
 def get_zai_usage() -> dict:
     """Fetch Z.AI usage from their monitor API"""
     api_key = get_zai_credentials()
@@ -1035,6 +1066,9 @@ def get_zai_usage() -> dict:
             result["status"] = "authenticated"
         else:
             result["error"] = "Could not fetch usage"
+
+    if result.get("status") == "ok":
+        result["quota_rate"] = zai_quota_rate()
 
     # Add hints
     result["hint"] = "Dashboard: https://z.ai/manage-apikey/billing"
@@ -1586,6 +1620,13 @@ def print_section(name: str, data: dict):
         if tq.get("limit") and "used" in tq:
             print(f"    ({tq['used']:,} / {tq['limit']:,} tokens)")
 
+    if "quota_rate" in data:
+        qr = data["quota_rate"]
+        if qr["peak"]:
+            print(f"\n  Quota Rate: ⚡ {qr['multiplier']} peak — ends in {qr['changes_in']}")
+        else:
+            print(f"\n  Quota Rate: {qr['multiplier']} off-peak — peak in {qr['changes_in']}")
+
     if "mcp_quota" in data:
         rq = data["mcp_quota"]
         if rq.get("limit"):
@@ -1792,6 +1833,8 @@ def _render_zai(data, window, use_color, show_resets=False):
         s = _fmt_both("Z.AI", str(pct), str(round(rq.get("used", 0) / rq["limit"] * 100)), use_color)
     else:
         s = _fmt_single("Z.AI", f"{pct}% (5h)", pct, "", use_color)
+    if data.get("quota_rate", {}).get("peak"):
+        s += " 3x" if use_color else " ⚡3x"
     if show_resets and (suf := _reset_suffix(data["token_quota"].get("resets_in"))):
         s += f" {suf}"
     return s

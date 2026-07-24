@@ -15,6 +15,7 @@ from cclimits import (
     _normalize_antigravity_models,
     _earliest_antigravity_reset,
     get_zai_usage,
+    zai_quota_rate,
     GEMINI_TIERS
 )
 
@@ -502,6 +503,37 @@ class TestGeminiTiers:
         assert "gemini-3-flash-preview" in flash3_models
 
 
+class TestZaiQuotaRate:
+    """Peak window is 06:00-10:00 UTC (14:00-18:00 UTC+8); computed client-side."""
+
+    def test_peak_hours(self):
+        from datetime import datetime, timezone
+        rate = zai_quota_rate(datetime(2026, 7, 24, 7, 30, tzinfo=timezone.utc))
+        assert rate["peak"] is True
+        assert rate["multiplier"] == "3x"
+        assert rate["changes_in"] == "2h 30m"
+
+    def test_offpeak_promo_before_october(self):
+        from datetime import datetime, timezone
+        rate = zai_quota_rate(datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc))
+        assert rate["peak"] is False
+        assert rate["multiplier"] == "1x (promo)"
+        assert rate["changes_in"] == "18h 0m"  # next 06:00 UTC
+
+    def test_offpeak_after_promo_ends(self):
+        from datetime import datetime, timezone
+        rate = zai_quota_rate(datetime(2026, 10, 1, 3, 0, tzinfo=timezone.utc))
+        assert rate["peak"] is False
+        assert rate["multiplier"] == "2x"
+        assert rate["changes_in"] == "3h 0m"
+
+    def test_boundaries(self):
+        from datetime import datetime, timezone
+        assert zai_quota_rate(datetime(2026, 7, 24, 6, 0, tzinfo=timezone.utc))["peak"] is True
+        assert zai_quota_rate(datetime(2026, 7, 24, 10, 0, tzinfo=timezone.utc))["peak"] is False
+        assert zai_quota_rate(datetime(2026, 7, 24, 5, 59, tzinfo=timezone.utc))["peak"] is False
+
+
 class TestZaiSparseQuota:
     """Z.AI TOKENS_LIMIT often has only percentage + nextResetTime — no fake zeros."""
 
@@ -533,6 +565,7 @@ class TestZaiSparseQuota:
         for absent in ("limit", "used", "remaining"):
             assert absent not in result["token_quota"]
         assert result["mcp_quota"] == {"limit": 4000, "used": 0, "remaining": 4000}
+        assert result["quota_rate"]["multiplier"] in ("3x", "2x", "1x (promo)")
 
     @patch('cclimits.get_zai_credentials')
     @patch('cclimits.http_get')
