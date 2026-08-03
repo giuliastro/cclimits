@@ -89,6 +89,8 @@ Z.AI: 1%/16% ✅ ↻3h28m/5d10h
 
 Status icons: ✅ ok · ⚠️ high usage · ❌ error · 🔑 no credentials found · ⏰ token expired. Cached results (`--cached`) are suffixed with their age, e.g. `(cached 42s)`.
 
+Exception: **Gemini** with an expired token or no credentials is hidden from check-all output entirely — Gemini CLI is retired, so the token generally can't be refreshed (nor credentials recreated) and the ⏰/🔑 row would be permanent noise. `--gemini` and `--json` still show the real state.
+
 ### Detailed Output (default)
 
 ```

@@ -2114,6 +2114,17 @@ Example Output:
             cached_data, cached_age = stale_cached
             results = apply_stale_fallback(results, cached_data, cached_age)
 
+    # Gemini CLI was retired upstream (2026-06), so an expired OAuth token
+    # generally can't be refreshed and missing credentials can't be recreated
+    # — a perpetual ⏰/🔑 row is noise.  Hide it from check-all display
+    # output; explicit --gemini and --json still surface the real state
+    # (and the cache keeps the full data).
+    gem = results.get("gemini", {})
+    if check_all and not args.json and (
+        gem.get("token_status") == "expired" or gem.get("error") == NO_CREDS_ERROR
+    ):
+        del results["gemini"]
+
     if args.json:
         print(json.dumps(results, indent=2))
     elif args.oneline:

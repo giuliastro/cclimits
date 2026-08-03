@@ -722,7 +722,12 @@ class TestZaiOnelineBoth:
 
 
 class TestOnelineExpiredToken:
-    """Expired tokens render ⏰ instead of silently vanishing from the line."""
+    """Expired tokens render ⏰ instead of silently vanishing from the line.
+
+    (Renderer-level contract.  main() drops an expired/no-creds Gemini entry
+    before rendering in check-all mode — see TestGeminiSuppression in
+    test_cli.py — so this render path is reached via explicit --gemini.)
+    """
 
     def test_gemini_expired_token_shown(self, capsys):
         results = {"gemini": {"token_status": "expired", "hint_refresh": "Run 'gemini' to refresh token"}}

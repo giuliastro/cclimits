@@ -1,5 +1,13 @@
 # Recent Deltas (Last 3-5 Changes)
 
+## 2026-08-03: Expired/No-Creds Gemini Hidden from Check-All Display
+
+- **Change**: when Gemini's check-all result has `token_status == "expired"` **or** `error == NO_CREDS_ERROR`, the entry is dropped from `results` in `main()` just before display (single top-level filter after the stale-fallback block, so it covers both the fetch and `--cached` paths). Previously showed a perpetual `Gemini: ⏰`/`Gemini: 🔑` in oneline and an error section in detailed view.
+- **Why**: Gemini CLI was retired upstream 2026-06-18, so an expired OAuth token generally can't be refreshed and missing credentials can't be recreated — the row was permanent noise on every run.
+- **Escape hatches**: explicit `--gemini` still renders the real state (⏰/🔑, debuggability), `--json` keeps the full entry (scripting), and the cache always stores it — so if the user ever re-auths (env overrides), Gemini reappears automatically. The `print_oneline`/`print_section` renderers are untouched; suppression is main()-level only. API-key-only setups (`auth: "API Key"`) are NOT hidden.
+- **Tests**: 232 total (6 new) — `TestGeminiSuppression` in test_cli.py (oneline hidden for expired + no-creds, detailed hidden, `--gemini` shows ⏰/🔑, `--json` keeps entry); clarifying docstring on renderer-level `TestOnelineExpiredToken` (test_output.py).
+- **Files**: `lib/cclimits.py`, `tests/test_cli.py`, `tests/test_output.py`, `README.md`, `memory-bank/deltas.md`, `memory-bank/progress.md`
+
 ## 2026-07-24: Z.AI Peak/Off-Peak Quota-Rate Indicator
 
 - **Feature**: Z.AI's peak window (14:00–18:00 UTC+8 = 06:00–10:00 UTC) and quota multiplier are computed **client-side** by `zai_quota_rate(now=None)` — no API endpoint exposes them. GLM-5.2/5-Turbo burn 3× quota at peak, 2× off-peak (promo: 1× through `ZAI_OFFPEAK_PROMO_END = 2026-09-30`; constant must be dropped/updated after that).

@@ -463,6 +463,132 @@ class TestEdgeCases:
         assert "Authenticated" in captured.out
 
 
+class TestGeminiSuppression:
+    """check-all display output hides Gemini when its token is expired or
+    credentials are missing entirely.
+
+    Gemini CLI was retired upstream, so an expired token can't be refreshed
+    and missing credentials can't be recreated — the ⏰/🔑 row would be
+    permanent noise.  Explicit --gemini and --json still surface the state.
+    """
+
+    GEMINI_EXPIRED = {"token_status": "expired", "hint_refresh": "Run 'gemini' to refresh token"}
+    GEMINI_NO_CREDS = {"error": "No credentials found", "hint": "Set GEMINI_API_KEY or run 'gemini' to authenticate"}
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--oneline'])
+    def test_oneline_check_all_hides_expired_gemini(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai,
+        mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = dict(self.GEMINI_EXPIRED)
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Gemini" not in captured.out
+        assert "Claude:" in captured.out
+        assert "Codex:" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits'])
+    def test_detailed_check_all_hides_expired_gemini(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai,
+        mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = dict(self.GEMINI_EXPIRED)
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Gemini" not in captured.out
+        assert "Claude Code" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--oneline'])
+    def test_oneline_check_all_hides_gemini_no_creds(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai,
+        mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = dict(self.GEMINI_NO_CREDS)
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Gemini" not in captured.out
+        assert "Claude:" in captured.out
+
+    @patch('cclimits.get_gemini_usage')
+    @patch('sys.argv', ['cclimits', '--gemini', '--oneline'])
+    def test_explicit_gemini_flag_still_shows_expired(self, mock_gemini, capsys):
+        mock_gemini.return_value = dict(self.GEMINI_EXPIRED)
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Gemini: ⏰" in captured.out
+
+    @patch('cclimits.get_gemini_usage')
+    @patch('sys.argv', ['cclimits', '--gemini', '--oneline'])
+    def test_explicit_gemini_flag_still_shows_no_creds(self, mock_gemini, capsys):
+        mock_gemini.return_value = dict(self.GEMINI_NO_CREDS)
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Gemini: 🔑" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--json'])
+    def test_json_check_all_keeps_expired_gemini(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai,
+        mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = dict(self.GEMINI_EXPIRED)
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+
+        main()
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["gemini"]["token_status"] == "expired"
+
+
 class TestCachedProviderFilter:
     """Provider filters must be honored on cache hits (issue: --zai --cached printed everything)."""
 

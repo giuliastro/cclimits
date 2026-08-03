@@ -27,7 +27,8 @@
 - ✅ Research on additional providers completed (`research/ai-coding-providers.md`)
 - ✅ Providers fetched concurrently; cache hits skip all network/credential calls; transient failures fall back to <24h-old cached data with stale marker (v1.3.0)
 - ✅ Data-driven `PROVIDERS` registry — adding a provider is one registry entry + one fetch function
-- ✅ CI (GitHub Actions matrix) + automated npm publish on `v*` tags via Trusted Publishing (OIDC); 226 tests
+- ✅ CI (GitHub Actions matrix) + automated npm publish on `v*` tags via Trusted Publishing (OIDC); 232 tests
+- ✅ Expired/no-creds Gemini (retired CLI) hidden from check-all display; visible via `--gemini`/`--json`
 
 ## Known Issues
 
