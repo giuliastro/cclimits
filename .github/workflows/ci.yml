@@ -26,8 +26,8 @@ jobs:
         # mock at the http_get/http_post level so they work either way.
         http-backend: ["requests", "urllib"]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install pytest
@@ -45,6 +45,6 @@ jobs:
   wrapper-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Node wrapper smoke test
         run: node bin/cclimits.js --help
