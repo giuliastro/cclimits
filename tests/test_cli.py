@@ -942,3 +942,138 @@ class TestStaleCacheFallback:
         captured = capsys.readouterr()
         assert "Stale fallback" in captured.out
         assert "30m" in captured.out
+
+
+class TestCopilotCLI:
+    """--copilot flag, check-all inclusion, and no-subscription suppression.
+
+    A GITHUB_TOKEN with no Copilot subscription on the account is a common,
+    permanent state (CI boxes, non-Copilot users) — check-all display hides
+    it; explicit --copilot and --json still surface it."""
+
+    COPILOT_GOOD = {
+        "status": "ok",
+        "premium_requests": {"used": 60, "entitlement": 300, "remaining": 240,
+                             "percentage": 20, "resets_in": "26d 2h"},
+    }
+    COPILOT_NO_SUB = {"error": "No Copilot subscription",
+                      "hint": "Token from $GITHUB_TOKEN has no Copilot access"}
+
+    @patch('cclimits.get_copilot_usage')
+    @patch('sys.argv', ['cclimits', '--copilot', '--oneline'])
+    def test_explicit_copilot_oneline(self, mock_usage, capsys):
+        mock_usage.return_value = dict(self.COPILOT_GOOD)
+        main()
+        captured = capsys.readouterr()
+        assert "Copilot: 20% (mo) ✅" in captured.out
+
+    @patch('cclimits.get_copilot_usage')
+    @patch('sys.argv', ['cclimits', '--copilot', '--oneline'])
+    def test_explicit_copilot_shows_no_sub_error(self, mock_usage, capsys):
+        mock_usage.return_value = dict(self.COPILOT_NO_SUB)
+        main()
+        captured = capsys.readouterr()
+        assert "Copilot: ❌" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_copilot_credentials', return_value={"token": "t", "source": "$GITHUB_TOKEN"})
+    @patch('cclimits.get_copilot_usage')
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--oneline'])
+    def test_check_all_includes_copilot_with_creds(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai, mock_cop_usage,
+        mock_cop_creds, mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = {"status": "ok", "models": {}}
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+        mock_cop_usage.return_value = dict(self.COPILOT_GOOD)
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Copilot: 20% (mo)" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_copilot_credentials', return_value={"token": "t", "source": "$GITHUB_TOKEN"})
+    @patch('cclimits.get_copilot_usage')
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--oneline'])
+    def test_check_all_oneline_hides_copilot_no_sub(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai, mock_cop_usage,
+        mock_cop_creds, mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = {"status": "ok", "models": {}}
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+        mock_cop_usage.return_value = dict(self.COPILOT_NO_SUB)
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Copilot" not in captured.out
+        assert "Claude:" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_copilot_credentials', return_value={"token": "t", "source": "$GITHUB_TOKEN"})
+    @patch('cclimits.get_copilot_usage')
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits'])
+    def test_check_all_detailed_hides_copilot_no_sub(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai, mock_cop_usage,
+        mock_cop_creds, mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = {"status": "ok", "models": {}}
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+        mock_cop_usage.return_value = dict(self.COPILOT_NO_SUB)
+
+        main()
+
+        captured = capsys.readouterr()
+        assert "Copilot" not in captured.out
+        assert "Claude Code" in captured.out
+
+    @patch('cclimits.get_synthetic_credentials', return_value=None)
+    @patch('cclimits.get_antigravity_credentials', return_value=None)
+    @patch('cclimits.get_kimi_credentials', return_value=None)
+    @patch('cclimits.get_openrouter_credentials', return_value=None)
+    @patch('cclimits.get_copilot_credentials', return_value={"token": "t", "source": "$GITHUB_TOKEN"})
+    @patch('cclimits.get_copilot_usage')
+    @patch('cclimits.get_zai_usage')
+    @patch('cclimits.get_gemini_usage')
+    @patch('cclimits.get_codex_usage')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--json'])
+    def test_json_check_all_keeps_copilot_no_sub(
+        self, mock_claude, mock_codex, mock_gemini, mock_zai, mock_cop_usage,
+        mock_cop_creds, mock_or_creds, mock_kimi_creds, mock_ag_creds, mock_syn_creds, capsys):
+        mock_claude.return_value = {"status": "ok", "five_hour": {"used": "45.5%"}}
+        mock_codex.return_value = {"status": "ok", "primary_window": {"used": "35.0%"}}
+        mock_gemini.return_value = {"status": "ok", "models": {}}
+        mock_zai.return_value = {"status": "ok", "token_quota": {"percentage": 30.0}}
+        mock_cop_usage.return_value = dict(self.COPILOT_NO_SUB)
+
+        main()
+
+        captured = capsys.readouterr()
+        output = json.loads(captured.out)
+        assert output["copilot"]["error"] == "No Copilot subscription"

@@ -4,7 +4,7 @@ Project instructions for Claude Code when working in this repository.
 
 ## Quick Orientation
 
-**cclimits** is a CLI tool that checks quota/usage for AI coding assistants (Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, Kimi/Moonshot, OpenRouter, Synthetic.new). Distributed via npm, runs Python under the hood.
+**cclimits** is a CLI tool that checks quota/usage for AI coding assistants (Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, Kimi/Moonshot, OpenRouter, Synthetic.new, GitHub Copilot). Distributed via npm, runs Python under the hood.
 
 **Repository**: https://github.com/cruzanstx/cclimits
 **npm**: https://www.npmjs.com/package/cclimits
@@ -116,6 +116,7 @@ There are two paths:
 | OpenRouter | `openrouter.ai/api/v1/credits` | `Authorization: Bearer {api_key}` |
 | Kimi (Moonshot) | `api.moonshot.ai/v1/users/me/balance` | `Authorization: Bearer {api_key}` |
 | Synthetic.new | `api.synthetic.new/v2/quotas` | `Authorization: Bearer {api_key}` |
+| Copilot | `api.github.com/copilot_internal/user` | `Bearer {github_token}` + `Editor-Version` |
 
 ## Testing Checklist
 
@@ -134,4 +135,5 @@ Before publishing:
 4. **Z.AI**: 5h shared quota across GLM-4.7, GLM-4.6, GLM-4.5V, GLM-4.5, GLM-4.5-Air, and Visual Analysis
 5. **Codex API key mode**: No quota info (only OAuth has it)
 6. **Synthetic.new**: Reports three buckets — subscription (period requests), rolling 5h tokens, and weekly $ credits. Calls to `/quotas` don't count against any bucket
-7. **Windows**: Untested, may have path issues
+7. **Copilot**: `copilot_internal/user` is undocumented (it's what the editor plugins use; no supported public API exists). Works with editor OAuth tokens, gh CLI tokens, and classic PATs; a token whose account has no Copilot subscription gets 404/403 → hidden from check-all display (like the Gemini pattern). The check consumes no premium requests
+8. **Windows**: Untested, may have path issues

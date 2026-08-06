@@ -824,3 +824,68 @@ class TestPrintSectionStaleFallback:
         print_section("Claude Code", data)
         captured = capsys.readouterr()
         assert "Stale fallback" not in captured.out
+
+
+class TestCopilotOutput:
+    """Copilot detailed section + oneline rendering."""
+
+    GOOD = {
+        "status": "ok",
+        "auth": "$GITHUB_TOKEN",
+        "account": "octocat",
+        "plan": "individual",
+        "premium_requests": {
+            "used": 60, "entitlement": 300, "remaining": 240,
+            "percentage": 20, "resets_in": "26d 2h", "reset_date": "2099-09-01",
+        },
+        "unlimited_buckets": ["chat", "completions"],
+        "dashboard_url": "https://github.com/settings/copilot/features",
+    }
+
+    def test_section_shows_premium_requests(self, capsys):
+        print_section("GitHub Copilot", dict(self.GOOD))
+        captured = capsys.readouterr()
+        assert "Premium Requests (monthly):" in captured.out
+        assert "60 / 300 (20%)" in captured.out
+        assert "Remaining: 240" in captured.out
+        assert "Resets in: 26d 2h (2099-09-01)" in captured.out
+        assert "chat, completions: unlimited" in captured.out
+        assert "Plan: individual" in captured.out
+        assert "Account: octocat" in captured.out
+
+    def test_section_unlimited(self, capsys):
+        data = dict(self.GOOD)
+        data["premium_requests"] = {"unlimited": True, "resets_in": "26d 2h"}
+        print_section("GitHub Copilot", data)
+        captured = capsys.readouterr()
+        assert "Unlimited" in captured.out
+
+    def test_oneline_percentage(self, capsys):
+        print_oneline({"copilot": dict(self.GOOD)})
+        captured = capsys.readouterr()
+        assert "Copilot: 20% (mo) ✅" in captured.out
+
+    def test_oneline_resets(self, capsys):
+        print_oneline({"copilot": dict(self.GOOD)}, show_resets=True)
+        captured = capsys.readouterr()
+        assert "↻26d2h" in captured.out
+
+    def test_oneline_unlimited(self, capsys):
+        data = dict(self.GOOD)
+        data["premium_requests"] = {"unlimited": True}
+        print_oneline({"copilot": data})
+        captured = capsys.readouterr()
+        assert "Copilot: ∞ (mo) ✅" in captured.out
+
+    def test_oneline_high_usage_icon(self, capsys):
+        data = dict(self.GOOD)
+        data["premium_requests"] = {"used": 285, "entitlement": 300,
+                                    "remaining": 15, "percentage": 95}
+        print_oneline({"copilot": data})
+        captured = capsys.readouterr()
+        assert "Copilot: 95% (mo) 🔴" in captured.out
+
+    def test_oneline_no_creds_icon(self, capsys):
+        print_oneline({"copilot": {"error": "No credentials found"}})
+        captured = capsys.readouterr()
+        assert "Copilot: 🔑" in captured.out

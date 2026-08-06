@@ -23,6 +23,17 @@ def isolated_cache(tmp_path, monkeypatch):
     monkeypatch.setattr(cclimits, "CACHE_FILE", cache_dir / "usage.json")
 
 
+@pytest.fixture(autouse=True)
+def no_ambient_copilot_creds(monkeypatch):
+    """GITHUB_TOKEN is commonly exported (and gh CLI config commonly present),
+    which would make every check-all test hit the live Copilot endpoint.
+    Default to no Copilot credentials; Copilot tests patch
+    get_copilot_credentials / get_copilot_usage explicitly, and the
+    credential-discovery tests call the directly imported function, which
+    this module-attribute patch does not affect."""
+    monkeypatch.setattr(cclimits, "get_copilot_credentials", lambda: None)
+
+
 @pytest.fixture
 def sample_claude_usage_response():
     """Mock Claude API usage response."""
@@ -216,3 +227,32 @@ def mock_subprocess():
     """Mock subprocess module."""
     with patch('cclimits.subprocess') as mock_sub:
         yield mock_sub
+
+
+@pytest.fixture
+def sample_copilot_user_response():
+    """Mock GitHub copilot_internal/user response (trimmed live capture).
+
+    Reset date is far-future so resets_in always computes in tests."""
+    return {
+        "login": "octocat",
+        "copilot_plan": "individual",
+        "access_type_sku": "yearly_subscriber_quota",
+        "chat_enabled": True,
+        "quota_reset_date": "2099-09-01",
+        "quota_reset_date_utc": "2099-09-01T00:00:00.000Z",
+        "quota_snapshots": {
+            "chat": {"unlimited": True, "percent_remaining": 100.0,
+                     "entitlement": 0, "remaining": 0, "overage_count": 0},
+            "completions": {"unlimited": True, "percent_remaining": 100.0,
+                            "entitlement": 0, "remaining": 0, "overage_count": 0},
+            "premium_interactions": {
+                "unlimited": False,
+                "percent_remaining": 80.0,
+                "remaining": 240,
+                "entitlement": 300,
+                "overage_count": 0,
+                "overage_permitted": False,
+            },
+        },
+    }

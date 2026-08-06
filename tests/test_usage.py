@@ -9,6 +9,7 @@ import pytest
 from cclimits import (
     get_claude_usage,
     get_codex_usage,
+    get_copilot_usage,
     get_gemini_usage,
     get_antigravity_credentials,
     get_antigravity_usage,
@@ -16,6 +17,8 @@ from cclimits import (
     _earliest_antigravity_reset,
     get_zai_usage,
     zai_quota_rate,
+    _is_transient_error,
+    COPILOT_NO_SUB_ERROR,
     GEMINI_TIERS
 )
 
@@ -578,3 +581,104 @@ class TestZaiSparseQuota:
 
         assert result["error"] == "Could not fetch usage"
         assert "status" not in result
+
+
+class TestGetCopilotUsage:
+    """Tests for get_copilot_usage() function."""
+
+    CREDS = {"token": "gho_test", "source": "$GITHUB_TOKEN"}
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_successful_usage(self, mock_get, mock_creds, sample_copilot_user_response):
+        """Full parse of a good copilot_internal/user response."""
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (200, sample_copilot_user_response)
+
+        result = get_copilot_usage()
+
+        assert result["status"] == "ok"
+        assert result["account"] == "octocat"
+        assert result["plan"] == "individual"
+        assert result["auth"] == "$GITHUB_TOKEN"
+        pr = result["premium_requests"]
+        assert pr["used"] == 60
+        assert pr["entitlement"] == 300
+        assert pr["remaining"] == 240
+        assert pr["percentage"] == 20
+        assert pr["reset_date"] == "2099-09-01"
+        assert "resets_in" in pr  # 2099 reset date is always in the future
+        assert result["unlimited_buckets"] == ["chat", "completions"]
+        url, headers = mock_get.call_args[0]
+        assert url == "https://api.github.com/copilot_internal/user"
+        assert headers["Authorization"] == "Bearer gho_test"
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_unlimited_premium(self, mock_get, mock_creds, sample_copilot_user_response):
+        """Unlimited premium bucket (some Business/Enterprise setups)."""
+        sample_copilot_user_response["quota_snapshots"]["premium_interactions"]["unlimited"] = True
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (200, sample_copilot_user_response)
+
+        result = get_copilot_usage()
+
+        assert result["premium_requests"]["unlimited"] is True
+        assert "percentage" not in result["premium_requests"]
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_no_subscription_404(self, mock_get, mock_creds):
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (404, "Not Found")
+
+        result = get_copilot_usage()
+
+        assert result["error"] == COPILOT_NO_SUB_ERROR
+        assert "status" not in result
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_forbidden_403_treated_as_no_subscription(self, mock_get, mock_creds):
+        """403 = token type not accepted for this endpoint — same permanent state."""
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (403, "access to this endpoint is forbidden")
+
+        result = get_copilot_usage()
+
+        assert result["error"] == COPILOT_NO_SUB_ERROR
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_invalid_token_401(self, mock_get, mock_creds):
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (401, "Bad credentials")
+
+        result = get_copilot_usage()
+
+        assert result["error"] == "Invalid API key"
+
+    @patch('cclimits.get_copilot_credentials')
+    def test_no_credentials(self, mock_creds):
+        mock_creds.return_value = None
+
+        result = get_copilot_usage()
+
+        assert result["error"] == "No credentials found"
+        assert "GITHUB_TOKEN" in result["hint"]
+
+    @patch('cclimits.get_copilot_credentials')
+    @patch('cclimits.http_get')
+    def test_missing_snapshots_still_ok(self, mock_get, mock_creds):
+        """A 200 without quota_snapshots (unexpected shape) must not crash."""
+        mock_creds.return_value = dict(self.CREDS)
+        mock_get.return_value = (200, {"login": "octocat", "copilot_plan": "business"})
+
+        result = get_copilot_usage()
+
+        assert result["status"] == "ok"
+        assert "premium_requests" not in result
+
+    def test_no_sub_error_is_not_transient(self):
+        """No-subscription is a permanent config state — stale-cache fallback must not mask it."""
+        assert _is_transient_error({"error": COPILOT_NO_SUB_ERROR}) is False

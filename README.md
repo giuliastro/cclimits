@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml/badge.svg)](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml)
 
-Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), and Synthetic.new. It also supports checking keys used by **Aider** and **Continue**.
+Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), Synthetic.new, and GitHub Copilot. It also supports checking keys used by **Aider** and **Continue**.
 
 ## Features
 
@@ -51,6 +51,7 @@ cclimits --openrouter # OpenRouter only
 cclimits --kimi       # Kimi only
 cclimits --antigravity # Google Antigravity only
 cclimits --synthetic  # Synthetic.new only
+cclimits --copilot    # GitHub Copilot only
 cclimits --json       # JSON output
 cclimits --oneline           # Compact one-liner (5h window)
 cclimits --oneline 7d        # Compact one-liner (7d window)
@@ -68,8 +69,8 @@ cclimits --oneline --cache-ttl 30  # Custom TTL in seconds
 ### Compact One-liner (--oneline)
 
 ```bash
-# Single window (5h or 7d)
-Claude: 4.0% (5h) ✅ | Codex: 0% (5h) ✅ | Z.AI: 1% (5h) ✅ | Gemini: ( 3-Flash 7% ✅ | Flash 1% ✅ | Pro 10% ✅ ) | OpenRouter: $47.91 ✅ | Kimi: $49.59 ✅ | Antigravity: 35% (8 models) ✅
+# Single window (5h or 7d); Copilot shows its monthly premium-request quota as (mo)
+Claude: 4.0% (5h) ✅ | Codex: 0% (5h) ✅ | Z.AI: 1% (5h) ✅ | Gemini: ( 3-Flash 7% ✅ | Flash 1% ✅ | Pro 10% ✅ ) | OpenRouter: $47.91 ✅ | Kimi: $49.59 ✅ | Antigravity: 35% (8 models) ✅ | Copilot: 20% (mo) ✅
 
 # Both windows (--oneline both) - shows 5h/7d combined (Z.AI: 5h-tokens%/monthly-MCP-tools%)
 Claude: 4.0%/10.0% ✅ | Codex: 0%/2% ✅ | Z.AI: 1%/16% ✅ | OpenRouter: $47.91 ✅
@@ -212,6 +213,20 @@ Exception: **Gemini** with an expired token or no credentials is hidden from che
   Weekly Credits:
     Remaining: $72.00 / $72.00 (100%)
     Next regen: 2h 53m (+$1.44)
+
+==================================================
+  GitHub Copilot
+==================================================
+  🔑 Auth: ~/.config/github-copilot/apps.json
+  👤 Account: octocat
+  ✅ Connected
+  📊 Plan: individual
+
+  Premium Requests (monthly):
+    Used:      60 / 300 (20%)
+    Remaining: 240
+    Resets in: 26d 2h (2026-09-01)
+    (chat, completions: unlimited)
 ```
 
 ## Status Icons
@@ -237,6 +252,7 @@ Credentials are auto-discovered from these locations:
 | **Kimi** | `$MOONSHOT_API_KEY` environment variable |
 | **Antigravity** | `~/.gemini/antigravity-cli/antigravity-oauth-token` (auto-refreshes); fallback `$ANTIGRAVITY_REFRESH_TOKEN` / `$ANTIGRAVITY_ACCESS_TOKEN` |
 | **Synthetic.new** | `$SYNTHETIC_API_KEY` environment variable |
+| **Copilot** | `~/.config/github-copilot/apps.json` (or `hosts.json`), gh CLI `~/.config/gh/hosts.yml`, or `$GITHUB_TOKEN` / `$GH_TOKEN` |
 
 ## Setup (One-Time)
 
@@ -277,7 +293,7 @@ export GEMINI_OAUTH_CLIENT_SECRET="..."
 - **Aider / Continue**: If you use these with an API key (OpenAI, Anthropic, OpenRouter, Gemini), simply set the corresponding environment variable (e.g., `OPENROUTER_API_KEY`) and run `cclimits --openrouter` (or the relevant flag) to check your balance/quota.
 
 **Note on Integrated Providers:**
-- **GitHub Copilot**: Currently not supported as GitHub does not expose a public API for individual user quota/rate limits.
+- **GitHub Copilot**: Supported via the undocumented `copilot_internal/user` endpoint that the Copilot editor plugins themselves use (there is still no supported public API). Any GitHub token for an account with a Copilot subscription works — editor sign-in files, gh CLI, or a plain `GITHUB_TOKEN`. A token whose account has *no* Copilot subscription is hidden from check-all output (visible with `--copilot` or `--json`). The check consumes no premium requests.
 - **Cursor / Windsurf**: Not supported yet as they do not provide public quota APIs.
 
 ## Requirements

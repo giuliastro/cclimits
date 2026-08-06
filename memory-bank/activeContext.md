@@ -2,10 +2,12 @@
 
 ## Current Focus
 
-- v1.3.0 released 2026-07-12 via the new automated pipeline; back to maintenance
-- Researching additional AI coding providers (Cursor, Copilot, Replit, etc.)
+- **2026-08-05**: GitHub Copilot provider implemented (see `deltas.md`) — unreleased, needs version bump + publish
+- Researching additional AI coding providers (Cursor, MiniMax, OpenCode Zen, Replit)
 
 ## Recent Changes (Last 7 Days)
+
+- **2026-08-05**: **GitHub Copilot integration** — monthly premium-request quota via undocumented `copilot_internal/user`; credential chain apps.json → hosts.json → gh hosts.yml → GITHUB_TOKEN; no-subscription tokens hidden from check-all (Gemini pattern); 232 → 261 tests. Key research reversal: endpoint accepts plain PATs, so the Jan "Low feasibility" rating no longer holds. Prompt `prompts/providers/011-github-copilot-integration.md` is now obsolete (written under the old assumption).
 
 - **2026-07-12**: **v1.3.0 released** — first release through the new tag-push pipeline (npm Trusted Publishing/OIDC, provenance attested). Five changes in one release, see `deltas.md`: cache-hit bypass bug fix (openrouter/kimi/antigravity/synthetic no longer fetch live on cache hits), concurrent provider fetching (ThreadPoolExecutor; wall time ≈ slowest provider), GitHub Actions CI (3.9/3.11/3.13 × requests/urllib matrix) + automated publish, data-driven `PROVIDERS` registry refactor (byte-identical output, −93 lines), stale-cache fallback (transient failures serve <24h-old good entries with stale marker). Suite: 155 → 205 tests
 - Publishing gotchas hit and fixed: `setup-node` `registry-url` breaks the OIDC exchange (E404); newer npm strips `./`-prefixed bin paths at publish (would have broken `npx cclimits`) — `npm pkg fix` applied
@@ -17,9 +19,9 @@
 
 ## Next Steps
 
-1. Implement Replit support (High feasibility endpoint identified)
-2. Monitor GitHub Copilot/Cursor for future public API availability
-3. ~~Add CI/CD for automated npm publishing~~ ✅ Done (2026-07-12) — `.github/workflows/ci.yml` runs tests on push/PR; `.github/workflows/publish.yml` publishes on `v*` tags via npm Trusted Publishing (OIDC, no token)
+1. Publish Copilot support (`npm version minor` → v1.6.0, tag push triggers publish.yml)
+2. Implement Replit support (High feasibility endpoint identified)
+3. Monitor Cursor (cookie-only usage API), MiniMax coding plan (`coding_plan/remains` rejects API keys — MiniMax-AI/MiniMax-M2#88), and OpenCode Zen balance (feature request anomalyco/opencode#10448)
 4. Possible future: Gemini legacy OAuth auto-refresh (CLI retired 2026-06-18; expired token now visible as ⏰ in oneline)
 
 ## Key Patterns

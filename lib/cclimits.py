@@ -103,11 +103,13 @@ def read_cache(ttl: int, max_age: int | None = None) -> tuple[dict, int] | None:
         return None
 
 NO_CREDS_ERROR = "No credentials found"
+COPILOT_NO_SUB_ERROR = "No Copilot subscription"
 
 # Error strings that signal a config/auth problem the user must fix, not a
 # transient outage.  These are excluded from stale-cache fallback.
 _NON_TRANSIENT_ERRORS = frozenset({
     NO_CREDS_ERROR,
+    COPILOT_NO_SUB_ERROR,
     "Token expired",
     "Invalid API key",
     "Forbidden",
@@ -1463,6 +1465,150 @@ def get_synthetic_usage() -> dict:
     return result
 
 
+### GitHub Copilot Functions
+
+def _copilot_token_from_json(path: Path) -> str | None:
+    """Extract a github.com oauth_token from a Copilot editor credential file
+    (apps.json keys look like "github.com:Iv1.xxx", hosts.json uses bare
+    "github.com")."""
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    for host_key, entry in data.items():
+        if "github.com" in host_key and isinstance(entry, dict):
+            if token := entry.get("oauth_token"):
+                return token
+    return None
+
+
+def _copilot_token_from_gh_hosts(path: Path) -> str | None:
+    """Extract the github.com oauth_token from the gh CLI hosts.yml.
+    Parsed by indentation to avoid a YAML dependency; the token may be
+    absent when gh keeps it in the system keyring."""
+    try:
+        lines = path.read_text().splitlines()
+    except OSError:
+        return None
+    in_github = False
+    for line in lines:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith((" ", "\t")):
+            in_github = line.split(":")[0].strip().strip('"') == "github.com"
+            continue
+        if in_github and (stripped := line.strip()).startswith("oauth_token:"):
+            return stripped.split(":", 1)[1].strip().strip("\"'") or None
+    return None
+
+
+def get_copilot_credentials() -> dict | None:
+    """Find a GitHub token for the Copilot quota check.
+
+    Copilot editor plugin files first (their OAuth app tokens are what the
+    plugins themselves send), then the gh CLI config, then env vars.
+    Returns {"token", "source"} or None.
+    """
+    copilot_dir = Path.home() / ".config" / "github-copilot"
+    for name in ["apps.json", "hosts.json"]:
+        if token := _copilot_token_from_json(copilot_dir / name):
+            return {"token": token, "source": f"~/.config/github-copilot/{name}"}
+    if token := _copilot_token_from_gh_hosts(Path.home() / ".config" / "gh" / "hosts.yml"):
+        return {"token": token, "source": "gh CLI (hosts.yml)"}
+    for var in ["GITHUB_TOKEN", "GH_TOKEN"]:
+        if token := os.environ.get(var):
+            return {"token": token, "source": f"${var}"}
+    return None
+
+
+def get_copilot_usage() -> dict:
+    """Fetch GitHub Copilot premium-request quota.
+
+    Uses the undocumented endpoint the Copilot editor plugins read
+    (api.github.com/copilot_internal/user); the check itself consumes no
+    premium requests.
+    """
+    creds = get_copilot_credentials()
+    if not creds:
+        return {
+            "error": NO_CREDS_ERROR,
+            "hint": "Sign in to a Copilot editor/CLI or set GITHUB_TOKEN",
+        }
+
+    headers = {
+        "Authorization": f"Bearer {creds['token']}",
+        "Accept": "application/json",
+        "Editor-Version": "vscode/1.96.0",
+    }
+    status, data = http_get("https://api.github.com/copilot_internal/user", headers)
+
+    if status == 401:
+        return {"error": "Invalid API key",
+                "hint": f"GitHub token from {creds['source']} was rejected"}
+    if status in (403, 404):
+        return {
+            "error": COPILOT_NO_SUB_ERROR,
+            "hint": f"Token from {creds['source']} has no Copilot access "
+                    "(no subscription, or token type not accepted)",
+            "dashboard": "https://github.com/settings/copilot",
+        }
+    if status != 200 or not isinstance(data, dict):
+        return {
+            "error": f"API error (HTTP {status})",
+            "details": data if isinstance(data, str) else json.dumps(data)[:200],
+        }
+
+    result: dict = {"status": "ok", "auth": creds["source"]}
+    if login := data.get("login"):
+        result["account"] = login
+    if plan := data.get("copilot_plan"):
+        result["plan"] = plan
+
+    snapshots = data.get("quota_snapshots") or {}
+    premium = snapshots.get("premium_interactions")
+    if isinstance(premium, dict):
+        pr: dict = {}
+        if premium.get("unlimited"):
+            pr["unlimited"] = True
+        else:
+            entitlement = int(premium.get("entitlement") or 0)
+            remaining = max(0, int(premium.get("remaining") or 0))
+            used = max(0, entitlement - remaining)
+            if premium.get("percent_remaining") is not None:
+                pct = max(0, min(100, int(round(100 - float(premium["percent_remaining"])))))
+            else:
+                pct = int(round(used / entitlement * 100)) if entitlement else 0
+            pr.update({
+                "used": used,
+                "entitlement": entitlement,
+                "remaining": remaining,
+                "percentage": pct,
+            })
+            if overage := int(premium.get("overage_count") or 0):
+                pr["overage_count"] = overage
+        reset_iso = data.get("quota_reset_date_utc") or (
+            f"{data['quota_reset_date']}T00:00:00Z" if data.get("quota_reset_date") else ""
+        )
+        if resets := _format_resets_in(reset_iso):
+            pr["resets_in"] = resets
+        if data.get("quota_reset_date"):
+            pr["reset_date"] = data["quota_reset_date"]
+        result["premium_requests"] = pr
+
+    unlimited = sorted(
+        key for key, snap in snapshots.items()
+        if key != "premium_interactions" and isinstance(snap, dict) and snap.get("unlimited")
+    )
+    if unlimited:
+        result["unlimited_buckets"] = unlimited
+
+    result["dashboard_url"] = "https://github.com/settings/copilot/features"
+    return result
+
+
 def print_section(name: str, data: dict):
     """Pretty print a section"""
     print(f"\n{'='*50}")
@@ -1673,6 +1819,23 @@ def print_section(name: str, data: dict):
             extra = ""
         if "next_regen_in" in wc:
             print(f"    Next regen: {wc['next_regen_in']}{extra}")
+
+    # GitHub Copilot premium requests (monthly)
+    if "premium_requests" in data:
+        pr = data["premium_requests"]
+        print(f"\n  Premium Requests (monthly):")
+        if pr.get("unlimited"):
+            print(f"    Unlimited")
+        else:
+            print(f"    Used:      {pr.get('used', 0):,} / {pr.get('entitlement', 0):,} ({pr.get('percentage', 0)}%)")
+            print(f"    Remaining: {pr.get('remaining', 0):,}")
+            if pr.get("overage_count"):
+                print(f"    Overage:   {pr['overage_count']:,}")
+        if "resets_in" in pr:
+            date_note = f" ({pr['reset_date']})" if pr.get("reset_date") else ""
+            print(f"    Resets in: {pr['resets_in']}{date_note}")
+        if data.get("unlimited_buckets"):
+            print(f"    ({', '.join(data['unlimited_buckets'])}: unlimited)")
 
     # OpenRouter-specific
     if "balance_usd" in data:
@@ -1894,6 +2057,19 @@ def _render_antigravity(data, window, use_color, show_resets=False):
     return out
 
 
+def _render_copilot(data, window, use_color, show_resets=False):
+    if data.get("status") != "ok" or "premium_requests" not in data:
+        return None
+    pr = data["premium_requests"]
+    if pr.get("unlimited"):
+        return _fmt_single("Copilot", "∞ (mo)", 0.0, "", use_color)
+    pct = pr.get("percentage", 0)
+    s = _fmt_single("Copilot", f"{pct}% (mo)", float(pct), "", use_color)
+    if show_resets and (suf := _reset_suffix(pr.get("resets_in"))):
+        s += f" {suf}"
+    return s
+
+
 # Provider registry — single source of truth.  Adding a provider: one entry
 # here + a fetch function (+ a custom renderer if the shared ones don't fit).
 
@@ -1930,6 +2106,10 @@ PROVIDERS = [
      "arg_help": "Only check Synthetic.new", "fetch": "get_synthetic_usage",
      "gated": True, "creds": "get_synthetic_credentials", "oneline_order": 3,
      "render_oneline": _render_synthetic},
+    {"key": "copilot", "title": "GitHub Copilot", "oneline_label": "Copilot",
+     "arg_help": "Only check GitHub Copilot", "fetch": "get_copilot_usage",
+     "gated": True, "creds": "get_copilot_credentials", "oneline_order": 8,
+     "render_oneline": _render_copilot},
 ]
 
 
@@ -1989,6 +2169,7 @@ Credential Locations (auto-discovered):
   Kimi       $MOONSHOT_API_KEY environment variable
   Antigravity system keyring, or $ANTIGRAVITY_REFRESH_TOKEN
   Synthetic  $SYNTHETIC_API_KEY environment variable
+  Copilot    ~/.config/github-copilot/apps.json, gh CLI hosts.yml, or $GITHUB_TOKEN
 
 Setup (one-time):
   claude           # Login to Claude Code
@@ -2005,6 +2186,7 @@ Examples:
   cclimits --kimi       # Kimi only
   cclimits --antigravity # Antigravity only
   cclimits --synthetic  # Synthetic.new only
+  cclimits --copilot    # GitHub Copilot only
   cclimits --json       # JSON output
   cclimits --oneline      # Compact one-liner (5h window)
   cclimits --oneline 7d   # Compact one-liner (7d window)
@@ -2017,7 +2199,7 @@ Example Output:
 """
 
     parser = argparse.ArgumentParser(
-        description="Check AI CLI usage/quota for Claude, Codex, Gemini, Z.AI, OpenRouter, Kimi, Antigravity, Synthetic.new",
+        description="Check AI CLI usage/quota for Claude, Codex, Gemini, Z.AI, OpenRouter, Kimi, Antigravity, Synthetic.new, GitHub Copilot",
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -2124,6 +2306,13 @@ Example Output:
         gem.get("token_status") == "expired" or gem.get("error") == NO_CREDS_ERROR
     ):
         del results["gemini"]
+
+    # A GITHUB_TOKEN on a box whose account has no Copilot subscription is
+    # common (CI, non-Copilot users) — that permanent state would be noise
+    # in check-all display output.  Explicit --copilot and --json still
+    # surface it.
+    if check_all and not args.json and results.get("copilot", {}).get("error") == COPILOT_NO_SUB_ERROR:
+        del results["copilot"]
 
     if args.json:
         print(json.dumps(results, indent=2))

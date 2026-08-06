@@ -7,12 +7,14 @@ import os
 from pathlib import Path
 from unittest.mock import patch, MagicMock, mock_open
 import pytest
+import cclimits
 from cclimits import (
     get_claude_credentials,
     get_openai_credentials,
     get_gemini_oauth_creds,
     get_gemini_credentials,
-    get_zai_credentials
+    get_zai_credentials,
+    get_copilot_credentials
 )
 
 
@@ -245,3 +247,73 @@ class TestGetZAICredentials:
 
         key = get_zai_credentials()
         assert key is None
+
+
+class TestGetCopilotCredentials:
+    """Discovery chain: Copilot editor files → gh CLI hosts.yml → env vars.
+
+    Uses the directly imported function, which the conftest ambient-creds
+    patch (on the module attribute) does not affect."""
+
+    @pytest.fixture(autouse=True)
+    def clean_env_and_home(self, tmp_path, monkeypatch):
+        monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+        monkeypatch.delenv("GH_TOKEN", raising=False)
+        monkeypatch.setattr(cclimits.Path, "home", lambda: tmp_path)
+        self.home = tmp_path
+
+    def _write(self, relpath, content):
+        p = self.home / relpath
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(content)
+
+    def test_apps_json_beats_env(self, monkeypatch):
+        self._write(".config/github-copilot/apps.json",
+                    json.dumps({"github.com:Iv1.abc123": {"user": "octocat", "oauth_token": "gho_apps"}}))
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_env")
+        creds = get_copilot_credentials()
+        assert creds == {"token": "gho_apps", "source": "~/.config/github-copilot/apps.json"}
+
+    def test_hosts_json_fallback(self):
+        self._write(".config/github-copilot/hosts.json",
+                    json.dumps({"github.com": {"oauth_token": "gho_hosts"}}))
+        creds = get_copilot_credentials()
+        assert creds["token"] == "gho_hosts"
+        assert "hosts.json" in creds["source"]
+
+    def test_gh_hosts_yml(self):
+        self._write(".config/gh/hosts.yml",
+                    "github.com:\n"
+                    "    git_protocol: https\n"
+                    "    users:\n"
+                    "        octocat:\n"
+                    "            oauth_token: gho_ghcli\n"
+                    "    oauth_token: gho_ghcli\n"
+                    "    user: octocat\n")
+        creds = get_copilot_credentials()
+        assert creds["token"] == "gho_ghcli"
+        assert "gh CLI" in creds["source"]
+
+    def test_gh_hosts_yml_other_host_ignored(self):
+        self._write(".config/gh/hosts.yml",
+                    "github.example.com:\n    oauth_token: gho_enterprise\n")
+        assert get_copilot_credentials() is None
+
+    def test_env_github_token(self, monkeypatch):
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_env")
+        creds = get_copilot_credentials()
+        assert creds == {"token": "ghp_env", "source": "$GITHUB_TOKEN"}
+
+    def test_env_gh_token_fallback(self, monkeypatch):
+        monkeypatch.setenv("GH_TOKEN", "ghp_gh")
+        creds = get_copilot_credentials()
+        assert creds["source"] == "$GH_TOKEN"
+
+    def test_no_credentials(self):
+        assert get_copilot_credentials() is None
+
+    def test_malformed_apps_json_skipped(self, monkeypatch):
+        self._write(".config/github-copilot/apps.json", "not json{")
+        monkeypatch.setenv("GITHUB_TOKEN", "ghp_env")
+        creds = get_copilot_credentials()
+        assert creds["source"] == "$GITHUB_TOKEN"

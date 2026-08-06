@@ -1,5 +1,16 @@
 # Recent Deltas (Last 3-5 Changes)
 
+## 2026-08-05: GitHub Copilot Integration
+
+- **Feature**: new `copilot` provider — monthly premium-request quota via the undocumented `GET api.github.com/copilot_internal/user` endpoint (what the Copilot editor plugins read; the check consumes no premium requests). Jan-2026 research rated Copilot "Low feasibility" — that flipped: the endpoint accepts plain PATs (live-verified with a `public_repo`-scope classic PAT) and is relied on by community tools (openusage, opencode-copilot-usage).
+- **Credentials**: `get_copilot_credentials()` chain — `~/.config/github-copilot/apps.json` (keys like `github.com:Iv1.xxx`) → `hosts.json` → gh CLI `~/.config/gh/hosts.yml` (indentation-parsed, no YAML dep; token may be keyring-only) → `$GITHUB_TOKEN`/`$GH_TOKEN`. Returns `{token, source}`; source is surfaced as the `auth` field.
+- **Parsing**: `quota_snapshots.premium_interactions` → `premium_requests` {used, entitlement, remaining, percentage (from `percent_remaining`), overage_count?, resets_in, reset_date}; `unlimited: true` handled (renders `∞ (mo)`); chat/completions surface as `unlimited_buckets`. Reset from `quota_reset_date_utc` via `_format_resets_in`.
+- **No-sub suppression**: new `COPILOT_NO_SUB_ERROR` ("No Copilot subscription", added to `_NON_TRANSIENT_ERRORS`) for 403/404 — a GITHUB_TOKEN whose account lacks Copilot is a common permanent state (CI boxes), so check-all display hides it exactly like the retired-Gemini pattern; `--copilot`/`--json` still surface it.
+- **Display**: oneline `Copilot: 20% (mo) ✅ ↻26d2h` (single monthly window in all window modes); detailed section shows Used/Remaining/Resets + unlimited-buckets note; `oneline_order: 8` (last).
+- **Test isolation (important)**: new autouse conftest fixture `no_ambient_copilot_creds` monkeypatches `cclimits.get_copilot_credentials → None` — without it, every pre-existing check-all CLI test would hit the live GitHub API on any box with `GITHUB_TOKEN` exported. Credential-discovery tests bypass it via direct `from cclimits import get_copilot_credentials` (module-attribute patch doesn't affect the imported binding); Copilot CLI tests re-patch with `@patch`.
+- **Tests**: 261 total (29 new) — `TestGetCopilotUsage` (8, test_usage.py), `TestCopilotOutput` (7, test_output.py), `TestCopilotCLI` (6, test_cli.py), `TestGetCopilotCredentials` (8, test_credentials.py). Live-verified all modes + urllib fallback on real account (individual plan, 300/300).
+- **Files**: `lib/cclimits.py`, `tests/conftest.py`, `tests/test_usage.py`, `tests/test_output.py`, `tests/test_cli.py`, `tests/test_credentials.py`, `README.md`, `CLAUDE.md`, `memory-bank/*`
+
 ## 2026-08-03: Expired/No-Creds Gemini Hidden from Check-All Display
 
 - **Change**: when Gemini's check-all result has `token_status == "expired"` **or** `error == NO_CREDS_ERROR`, the entry is dropped from `results` in `main()` just before display (single top-level filter after the stale-fallback block, so it covers both the fetch and `--cached` paths). Previously showed a perpetual `Gemini: ⏰`/`Gemini: 🔑` in oneline and an error section in detailed view.
