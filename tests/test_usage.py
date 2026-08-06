@@ -507,7 +507,10 @@ class TestGeminiTiers:
 
 
 class TestZaiQuotaRate:
-    """Peak window is 06:00-10:00 UTC (14:00-18:00 UTC+8); computed client-side."""
+    """Peak is Mon-Fri 06:00-10:00 UTC (14:00-18:00 UTC+8); weekends off-peak all day.
+
+    2026-07-24 is a Friday, 2026-07-25 a Saturday, 2026-07-27 a Monday.
+    """
 
     def test_peak_hours(self):
         from datetime import datetime, timezone
@@ -516,25 +519,26 @@ class TestZaiQuotaRate:
         assert rate["multiplier"] == "3x"
         assert rate["changes_in"] == "2h 30m"
 
-    def test_offpeak_promo_before_october(self):
+    def test_offpeak_friday_afternoon_skips_weekend(self):
         from datetime import datetime, timezone
         rate = zai_quota_rate(datetime(2026, 7, 24, 12, 0, tzinfo=timezone.utc))
         assert rate["peak"] is False
-        assert rate["multiplier"] == "1x (promo)"
-        assert rate["changes_in"] == "18h 0m"  # next 06:00 UTC
+        assert rate["multiplier"] == "1x"
+        assert rate["changes_in"] == "66h 0m"  # Monday 06:00 UTC
 
-    def test_offpeak_after_promo_ends(self):
+    def test_saturday_inside_window_hours_is_offpeak(self):
         from datetime import datetime, timezone
-        rate = zai_quota_rate(datetime(2026, 10, 1, 3, 0, tzinfo=timezone.utc))
+        rate = zai_quota_rate(datetime(2026, 7, 25, 7, 0, tzinfo=timezone.utc))
         assert rate["peak"] is False
-        assert rate["multiplier"] == "2x"
-        assert rate["changes_in"] == "3h 0m"
+        assert rate["multiplier"] == "1x"
+        assert rate["changes_in"] == "47h 0m"  # Monday 06:00 UTC
 
     def test_boundaries(self):
         from datetime import datetime, timezone
         assert zai_quota_rate(datetime(2026, 7, 24, 6, 0, tzinfo=timezone.utc))["peak"] is True
         assert zai_quota_rate(datetime(2026, 7, 24, 10, 0, tzinfo=timezone.utc))["peak"] is False
         assert zai_quota_rate(datetime(2026, 7, 24, 5, 59, tzinfo=timezone.utc))["peak"] is False
+        assert zai_quota_rate(datetime(2026, 7, 26, 7, 0, tzinfo=timezone.utc))["peak"] is False  # Sunday
 
 
 class TestZaiSparseQuota:
@@ -568,7 +572,7 @@ class TestZaiSparseQuota:
         for absent in ("limit", "used", "remaining"):
             assert absent not in result["token_quota"]
         assert result["mcp_quota"] == {"limit": 4000, "used": 0, "remaining": 4000}
-        assert result["quota_rate"]["multiplier"] in ("3x", "2x", "1x (promo)")
+        assert result["quota_rate"]["multiplier"] in ("3x", "1x")
 
     @patch('cclimits.get_zai_credentials')
     @patch('cclimits.http_get')

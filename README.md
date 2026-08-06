@@ -75,7 +75,7 @@ Claude: 4.0% (5h) ✅ | Codex: 0% (5h) ✅ | Z.AI: 1% (5h) ✅ | Gemini: ( 3-Fla
 # Both windows (--oneline both) - shows 5h/7d combined (Z.AI: 5h-tokens%/monthly-MCP-tools%)
 Claude: 4.0%/10.0% ✅ | Codex: 0%/2% ✅ | Z.AI: 1%/16% ✅ | OpenRouter: $47.91 ✅
 
-# During Z.AI peak hours (06:00-10:00 UTC) a ⚡3x quota-rate marker appears
+# During Z.AI peak hours (Mon-Fri 06:00-10:00 UTC; weekends are off-peak) a ⚡3x quota-rate marker appears
 Z.AI: 1% (5h) ✅ ⚡3x
 
 # No emoji mode (--noemoji) - colorizes percentages directly (green/yellow/red)
@@ -149,7 +149,7 @@ Exception: **Gemini** with an expired token or no credentials is hidden from che
     Remaining: 99%
     Resets in: 4h 30m
 
-  Quota Rate: 1x (promo) off-peak — peak in 1h 30m
+  Quota Rate: 1x off-peak — peak in 1h 30m
 
   MCP Tools (monthly):
     Used:      650 / 4,000

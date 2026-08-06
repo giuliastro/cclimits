@@ -12,7 +12,7 @@ import subprocess
 import sys
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 # Optional: use requests if available, fallback to urllib
@@ -931,28 +931,29 @@ def get_zai_credentials() -> str | None:
     return None
 
 
-# Z.AI peak window (docs.z.ai/devpack/faq): 14:00-18:00 UTC+8 = 06:00-10:00 UTC.
-# GLM-5.2 / GLM-5-Turbo consume 3x quota during peak, 2x off-peak
-# (promo: 1x off-peak through 2026-09-30). Not exposed by any API endpoint.
+# Z.AI peak window (docs.z.ai/devpack/overview + /devpack/notice/usage-revision):
+# Mon-Fri 14:00-18:00 UTC+8 = 06:00-10:00 UTC; weekends are off-peak all day.
+# Quota-based plans burn 3x peak / 1x off-peak on GLM-5.2/5-Turbo; the newer
+# credits-based plans use 1x peak / 0.5x off-peak. Not exposed by any API endpoint.
 ZAI_PEAK_START_UTC = 6
 ZAI_PEAK_END_UTC = 10
-ZAI_OFFPEAK_PROMO_END = (2026, 9, 30)
 
 
 def zai_quota_rate(now: datetime | None = None) -> dict:
     """Compute Z.AI peak/off-peak status and quota multiplier client-side."""
     now = now or datetime.now(timezone.utc)
-    is_peak = ZAI_PEAK_START_UTC <= now.hour < ZAI_PEAK_END_UTC
+    is_peak = now.weekday() < 5 and ZAI_PEAK_START_UTC <= now.hour < ZAI_PEAK_END_UTC
 
     if is_peak:
         multiplier = "3x"
         boundary = now.replace(hour=ZAI_PEAK_END_UTC, minute=0, second=0, microsecond=0)
     else:
-        promo = (now.year, now.month, now.day) <= ZAI_OFFPEAK_PROMO_END
-        multiplier = "1x (promo)" if promo else "2x"
+        multiplier = "1x"
         boundary = now.replace(hour=ZAI_PEAK_START_UTC, minute=0, second=0, microsecond=0)
         if now.hour >= ZAI_PEAK_START_UTC:
-            boundary += __import__("datetime").timedelta(days=1)
+            boundary += timedelta(days=1)
+        while boundary.weekday() >= 5:
+            boundary += timedelta(days=1)
 
     hours, remainder = divmod(int((boundary - now).total_seconds()), 3600)
     return {
