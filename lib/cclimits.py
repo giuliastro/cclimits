@@ -2698,6 +2698,8 @@ Example Output:
                         help="Override default TTL (default: 60, implies --cached)")
     parser.add_argument("--no-stale-fallback", action="store_true",
                         help="Disable stale-cache fallback for transient API errors")
+    parser.add_argument("--no-cache-write", action="store_true",
+                        help="Do not write fetched results to the local cache")
     args = parser.parse_args()
 
     # Determine cache settings
@@ -2766,10 +2768,11 @@ Example Output:
         if not args.no_stale_fallback:
             stale_cached = read_cache(cache_ttl, max_age=STALE_CACHE_MAX_AGE)
 
-        # Always write cache for future --cached calls.
-        # Extended merge preserves prior good entries when this run hit a
-        # transient error, so the cache stays the best known data.
-        write_cache(results)
+        # Write cache for future --cached calls unless a read-only embedding
+        # explicitly disables it.  This lets tools such as Token Harness invoke
+        # cclimits as a pure observer without changing ~/.cache/cclimits.
+        if not args.no_cache_write:
+            write_cache(results)
 
         # Apply stale-cache fallback: replace transient errors with the
         # last good cached entry (annotated with its age).
