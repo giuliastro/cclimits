@@ -469,9 +469,6 @@ def get_claude_cached_usage() -> dict | None:
             if age_seconds > CLAUDE_LOCAL_USAGE_STALE_SECONDS:
                 result["source_stale"] = True
 
-        if account_uuid := cached.get("accountUuid"):
-            result["account_uuid"] = str(account_uuid)
-
         return result
 
     return None
