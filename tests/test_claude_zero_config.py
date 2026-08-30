@@ -42,8 +42,10 @@ def test_reads_claude_code_cached_usage_without_credentials(tmp_path):
     assert result["source_path"] == str(state)
     assert result["five_hour"]["used"] == "37.5%"
     assert result["five_hour"]["remaining"] == "62.5%"
+    assert result["five_hour"]["resets_at"] == "2099-01-01T12:00:00+00:00"
     assert result["seven_day"]["used"] == "61.0%"
     assert result["seven_day"]["remaining"] == "39.0%"
+    assert result["seven_day"]["resets_at"] == "2099-01-07T12:00:00+00:00"
     assert result["source_age_seconds"] < 5
     assert "source_stale" not in result
 
@@ -107,8 +109,14 @@ def test_desktop_oauth_wins_over_local_usage_cache():
          patch("cclimits.get_claude_desktop_credentials", return_value=desktop), \
          patch("cclimits.get_claude_cached_usage") as cached, \
          patch("cclimits.http_get", return_value=(200, {
-             "five_hour": {"utilization": 18.0},
-             "seven_day": {"utilization": 42.0},
+             "five_hour": {
+                 "utilization": 18.0,
+                 "resets_at": "2099-01-01T12:00:00+00:00",
+             },
+             "seven_day": {
+                 "utilization": 42.0,
+                 "resets_at": "2099-01-07T12:00:00+00:00",
+             },
          })) as http_get:
         result = get_claude_usage()
 
@@ -117,6 +125,8 @@ def test_desktop_oauth_wins_over_local_usage_cache():
     assert result["plan"] == "pro"
     assert result["five_hour"]["remaining"] == "82.0%"
     assert result["seven_day"]["remaining"] == "58.0%"
+    assert result["five_hour"]["resets_at"] == "2099-01-01T12:00:00+00:00"
+    assert result["seven_day"]["resets_at"] == "2099-01-07T12:00:00+00:00"
     cached.assert_not_called()
     headers = http_get.call_args.args[1]
     assert headers["Authorization"] == "Bearer desktop-token"
