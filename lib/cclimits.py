@@ -788,6 +788,7 @@ def get_claude_cached_usage() -> dict | None:
                 "remaining": f"{max(0.0, 100 - used):.1f}%",
             }
             if resets_at := window.get("resets_at"):
+                entry["resets_at"] = resets_at
                 entry["resets_in"] = format_reset_time(resets_at)
             result[result_key] = entry
 
@@ -862,6 +863,7 @@ def get_claude_usage() -> dict:
             result["five_hour"] = {
                 "used": f"{data['five_hour'].get('utilization', 0):.1f}%",
                 "remaining": f"{100 - data['five_hour'].get('utilization', 0):.1f}%",
+                "resets_at": data['five_hour'].get('resets_at'),
                 "resets_in": format_reset_time(data['five_hour'].get('resets_at')),
             }
 
@@ -869,6 +871,7 @@ def get_claude_usage() -> dict:
             result["seven_day"] = {
                 "used": f"{data['seven_day'].get('utilization', 0):.1f}%",
                 "remaining": f"{100 - data['seven_day'].get('utilization', 0):.1f}%",
+                "resets_at": data['seven_day'].get('resets_at'),
                 "resets_in": format_reset_time(data['seven_day'].get('resets_at')),
             }
 
