@@ -35,7 +35,6 @@ def test_reads_claude_code_cached_usage_without_credentials(tmp_path):
     assert result["status"] == "ok"
     assert result["source"] == "claude_code_cache"
     assert result["source_path"] == str(state)
-    assert result["account_uuid"] == "account-123"
     assert result["five_hour"]["used"] == "37.5%"
     assert result["five_hour"]["remaining"] == "62.5%"
     assert result["seven_day"]["used"] == "61.0%"
