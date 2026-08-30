@@ -74,7 +74,7 @@ class TestGetClaudeUsage:
         result = get_claude_usage()
 
         assert result["error"] == "No credentials found"
-        assert "authenticate first" in result["hint"]
+        assert "No Claude Code usage cache found" in result["hint"]
 
     @patch('cclimits.get_claude_credentials')
     @patch('cclimits.http_get')
