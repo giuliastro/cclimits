@@ -385,11 +385,111 @@ def get_claude_credentials() -> str | None:
     return os.environ.get("CLAUDE_ACCESS_TOKEN")
 
 
+CLAUDE_LOCAL_USAGE_STALE_SECONDS = 30 * 60
+
+
+def get_claude_cached_usage() -> dict | None:
+    """Read Claude Code's own cached subscription quota without authentication.
+
+    Claude Code writes the latest server-provided usage snapshot to the
+    account-wide ~/.claude.json file under cachedUsageUtilization. Reading
+    this file is zero-setup, read-only, and does not expose or refresh OAuth
+    credentials. The snapshot may be older than the current process, so callers
+    receive its age and a staleness marker instead of silently treating it as
+    live data.
+    """
+    state_paths = []
+
+    if custom_state := os.environ.get("CLAUDE_CONFIG_JSON"):
+        state_paths.append(Path(custom_state).expanduser())
+
+    # Claude Code keeps this account-wide file at ~/.claude.json even when the
+    # normal config directory is ~/.claude.
+    state_paths.append(Path.home() / ".claude.json")
+
+    # Tolerate custom profiles that explicitly colocate a state file.
+    if config_dir := os.environ.get("CLAUDE_CONFIG_DIR"):
+        state_paths.append(Path(config_dir).expanduser() / ".claude.json")
+
+    seen = set()
+    for state_path in state_paths:
+        path_key = str(state_path)
+        if path_key in seen:
+            continue
+        seen.add(path_key)
+
+        try:
+            root = json.loads(state_path.read_text())
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(root, dict):
+            continue
+
+        cached = root.get("cachedUsageUtilization")
+        if not isinstance(cached, dict):
+            continue
+        utilization = cached.get("utilization")
+        if not isinstance(utilization, dict):
+            continue
+
+        result: dict = {
+            "status": "ok",
+            "source": "claude_code_cache",
+            "source_path": str(state_path),
+        }
+
+        for source_key, result_key in (
+            ("five_hour", "five_hour"),
+            ("seven_day", "seven_day"),
+            ("seven_day_opus", "opus"),
+        ):
+            window = utilization.get(source_key)
+            if not isinstance(window, dict):
+                continue
+            used = window.get("utilization")
+            if not isinstance(used, (int, float)):
+                continue
+            entry = {
+                "used": f"{used:.1f}%",
+                "remaining": f"{max(0.0, 100 - used):.1f}%",
+            }
+            if resets_at := window.get("resets_at"):
+                entry["resets_in"] = format_reset_time(resets_at)
+            result[result_key] = entry
+
+        # A recognized cache with no numeric quota windows is not useful.
+        if not any(key in result for key in ("five_hour", "seven_day", "opus")):
+            continue
+
+        fetched_at_ms = cached.get("fetchedAtMs")
+        if isinstance(fetched_at_ms, (int, float)) and fetched_at_ms > 0:
+            now_ms = datetime.now(timezone.utc).timestamp() * 1000
+            age_seconds = max(0, int((now_ms - fetched_at_ms) / 1000))
+            result["source_age_seconds"] = age_seconds
+            if age_seconds > CLAUDE_LOCAL_USAGE_STALE_SECONDS:
+                result["source_stale"] = True
+
+        if account_uuid := cached.get("accountUuid"):
+            result["account_uuid"] = str(account_uuid)
+
+        return result
+
+    return None
+
+
 def get_claude_usage() -> dict:
     """Fetch Claude Code usage from Anthropic API"""
     token = get_claude_credentials()
     if not token:
-        return {"error": "No credentials found", "hint": "Run 'claude' and authenticate first"}
+        # Zero-config fallback: Claude Code itself caches the last server usage
+        # snapshot in ~/.claude.json. This path needs no login, token access, or
+        # network request from cclimits.
+        if cached := get_claude_cached_usage():
+            return cached
+        return {
+            "error": "No credentials found",
+            "hint": "No Claude Code usage cache found yet; run Claude Code once so it can fetch usage"
+        }
 
     headers = {
         "Authorization": f"Bearer {token}",
@@ -1635,6 +1735,13 @@ def print_section(name: str, data: dict):
         age = data.get("stale_age_seconds", 0)
         print(f"  💤 Stale fallback (last good: {format_cache_age(age)} ago)")
 
+    # Claude Code can provide quota without credentials via its own local cache.
+    if data.get("source") == "claude_code_cache":
+        age = data.get("source_age_seconds")
+        age_text = f" ({format_cache_age(age)} old)" if isinstance(age, int) else ""
+        stale_text = " [stale]" if data.get("source_stale") else ""
+        print(f"  📍 Source: Claude Code local usage cache{age_text}{stale_text}")
+
     # Claude-specific usage data
     if "five_hour" in data:
         fh = data["five_hour"]
@@ -2161,7 +2268,8 @@ def main():
 
     epilog = """
 Credential Locations (auto-discovered):
-  Claude     ~/.claude/.credentials.json (Linux)
+  Claude     ~/.claude.json cached usage (zero-login fallback)
+              ~/.claude/.credentials.json (Linux)
               macOS Keychain "Claude Code-credentials" (macOS)
   Codex      ~/.codex/auth.json
   Gemini     ~/.gemini/oauth_creds.json (auto-refreshes expired tokens)
