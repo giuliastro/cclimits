@@ -385,6 +385,340 @@ def get_claude_credentials() -> str | None:
     return os.environ.get("CLAUDE_ACCESS_TOKEN")
 
 
+
+# Claude Desktop OAuth discovery is intentionally read-only. We borrow only a
+# currently valid access token maintained by the official Desktop app and never
+# refresh or write it back, because OAuth refresh-token rotation could invalidate
+# Claude Desktop's own copy.
+#
+# Windows safeStorage implementation adapted from the MIT-licensed
+# huanchong-99/claude-usage-assistant project. Profile discovery also covers the
+# Microsoft Store/MSIX layout used by current Claude Desktop releases.
+CLAUDE_DESKTOP_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CLAUDE_DESKTOP_TOKEN_SAFETY_SECONDS = 120
+
+
+def _claude_desktop_dir_candidates() -> list[Path]:
+    """Return likely Claude Desktop user-data directories, zero-config."""
+    candidates: list[Path] = []
+
+    if sys.platform.startswith("win"):
+        roaming = os.environ.get("APPDATA")
+        if roaming:
+            candidates.append(Path(roaming) / "Claude")
+        else:
+            candidates.append(Path.home() / "AppData" / "Roaming" / "Claude")
+
+        local = os.environ.get("LOCALAPPDATA")
+        packages = Path(local) / "Packages" if local else Path.home() / "AppData" / "Local" / "Packages"
+        try:
+            if packages.exists():
+                store_profiles = []
+                for entry in packages.iterdir():
+                    name = entry.name.lower()
+                    if not (name.startswith("claude_") or "anthropic" in name):
+                        continue
+                    profile = entry / "LocalCache" / "Roaming" / "Claude"
+                    if profile.exists():
+                        try:
+                            mtime = profile.stat().st_mtime
+                        except OSError:
+                            mtime = 0
+                        has_cookie_db = any(
+                            p.exists()
+                            for p in (
+                                profile / "Network" / "Cookies",
+                                profile / "Cookies",
+                                profile / "Default" / "Network" / "Cookies",
+                                profile / "Default" / "Cookies",
+                            )
+                        )
+                        store_profiles.append((has_cookie_db, mtime, profile))
+                store_profiles.sort(key=lambda item: (item[0], item[1]), reverse=True)
+                candidates.extend(item[2] for item in store_profiles)
+        except (OSError, PermissionError):
+            pass
+    elif sys.platform == "darwin":
+        candidates.append(Path.home() / "Library" / "Application Support" / "Claude")
+    else:
+        candidates.append(Path.home() / ".config" / "Claude")
+
+    seen = set()
+    result = []
+    for path in candidates:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _win_dpapi_unprotect(blob: bytes) -> bytes | None:
+    """Decrypt a Windows DPAPI blob using only Python stdlib ctypes."""
+    if not sys.platform.startswith("win") or not blob:
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        class DATA_BLOB(ctypes.Structure):
+            _fields_ = [
+                ("cbData", wt.DWORD),
+                ("pbData", ctypes.POINTER(ctypes.c_char)),
+            ]
+
+        in_buf = ctypes.create_string_buffer(blob, len(blob))
+        in_blob = DATA_BLOB(
+            len(blob),
+            ctypes.cast(in_buf, ctypes.POINTER(ctypes.c_char)),
+        )
+        out_blob = DATA_BLOB()
+
+        crypt32 = ctypes.windll.crypt32
+        kernel32 = ctypes.windll.kernel32
+        ok = crypt32.CryptUnprotectData(
+            ctypes.byref(in_blob), None, None, None, None, 0, ctypes.byref(out_blob)
+        )
+        if not ok:
+            return None
+        try:
+            return ctypes.string_at(out_blob.pbData, out_blob.cbData)
+        finally:
+            kernel32.LocalFree(out_blob.pbData)
+    except Exception:
+        return None
+
+
+def _win_gcm_decrypt(key: bytes, nonce: bytes, ciphertext: bytes, tag: bytes) -> bytes | None:
+    """AES-256-GCM through Windows CNG/BCrypt, with no third-party package."""
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes as wt
+
+        bcrypt = ctypes.windll.bcrypt
+
+        class BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO(ctypes.Structure):
+            _fields_ = [
+                ("cbSize", wt.ULONG),
+                ("dwInfoVersion", wt.ULONG),
+                ("pbNonce", ctypes.c_void_p),
+                ("cbNonce", wt.ULONG),
+                ("pbAuthData", ctypes.c_void_p),
+                ("cbAuthData", wt.ULONG),
+                ("pbTag", ctypes.c_void_p),
+                ("cbTag", wt.ULONG),
+                ("pbMacContext", ctypes.c_void_p),
+                ("cbMacContext", wt.ULONG),
+                ("cbAAD", wt.ULONG),
+                ("cbData", ctypes.c_ulonglong),
+                ("dwFlags", wt.ULONG),
+            ]
+
+        h_alg = ctypes.c_void_p()
+        h_key = ctypes.c_void_p()
+        key_buf = ctypes.create_string_buffer(key, len(key))
+        nonce_buf = ctypes.create_string_buffer(nonce, len(nonce))
+        tag_buf = ctypes.create_string_buffer(tag, len(tag))
+        ct_buf = ctypes.create_string_buffer(ciphertext, len(ciphertext))
+        out = ctypes.create_string_buffer(max(1, len(ciphertext)))
+        out_len = wt.ULONG(0)
+
+        if bcrypt.BCryptOpenAlgorithmProvider(ctypes.byref(h_alg), "AES", None, 0) != 0:
+            return None
+        try:
+            mode = "ChainingModeGCM".encode("utf-16-le") + b"\x00\x00"
+            mode_buf = ctypes.create_string_buffer(mode, len(mode))
+            if bcrypt.BCryptSetProperty(
+                h_alg, "ChainingMode", mode_buf, len(mode), 0
+            ) != 0:
+                return None
+            if bcrypt.BCryptGenerateSymmetricKey(
+                h_alg,
+                ctypes.byref(h_key),
+                None,
+                0,
+                key_buf,
+                len(key),
+                0,
+            ) != 0:
+                return None
+            try:
+                auth = BCRYPT_AUTHENTICATED_CIPHER_MODE_INFO()
+                auth.cbSize = ctypes.sizeof(auth)
+                auth.dwInfoVersion = 1
+                auth.pbNonce = ctypes.cast(nonce_buf, ctypes.c_void_p)
+                auth.cbNonce = len(nonce)
+                auth.pbTag = ctypes.cast(tag_buf, ctypes.c_void_p)
+                auth.cbTag = len(tag)
+
+                status = bcrypt.BCryptDecrypt(
+                    h_key,
+                    ct_buf,
+                    len(ciphertext),
+                    ctypes.byref(auth),
+                    None,
+                    0,
+                    out,
+                    len(ciphertext),
+                    ctypes.byref(out_len),
+                    0,
+                )
+                if status != 0:
+                    return None
+                return out.raw[:out_len.value]
+            finally:
+                if h_key:
+                    bcrypt.BCryptDestroyKey(h_key)
+        finally:
+            if h_alg:
+                bcrypt.BCryptCloseAlgorithmProvider(h_alg, 0)
+    except Exception:
+        return None
+
+
+def _claude_desktop_safestorage_key(profile_dir: Path) -> bytes | None:
+    """Get Claude Desktop's Chromium safeStorage key on Windows, read-only."""
+    if not sys.platform.startswith("win"):
+        return None
+    try:
+        import base64
+
+        local_state = json.loads((profile_dir / "Local State").read_text(encoding="utf-8"))
+        encrypted = base64.b64decode(local_state["os_crypt"]["encrypted_key"])
+        if not encrypted.startswith(b"DPAPI"):
+            return None
+        return _win_dpapi_unprotect(encrypted[5:])
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def _claude_desktop_decrypt(value: str, key: bytes) -> bytes | None:
+    """Decrypt one Electron safeStorage base64 value on Windows."""
+    try:
+        import base64
+
+        blob = base64.b64decode(value)
+    except (ValueError, TypeError):
+        return None
+
+    if blob[:3] in (b"v10", b"v11"):
+        payload = blob[3:]
+        if len(payload) < 12 + 16:
+            return None
+        nonce = payload[:12]
+        ciphertext_and_tag = payload[12:]
+        return _win_gcm_decrypt(
+            key,
+            nonce,
+            ciphertext_and_tag[:-16],
+            ciphertext_and_tag[-16:],
+        )
+
+    # Older Electron/Chromium builds can store safeStorage values as raw DPAPI.
+    return _win_dpapi_unprotect(blob)
+
+
+def _claude_desktop_tokens() -> list[dict]:
+    """Discover live OAuth access tokens maintained by Claude Desktop.
+
+    The Desktop token cache is encrypted with Electron safeStorage. On Windows
+    that ultimately uses the current user's DPAPI-protected Chromium key. We do
+    not return refresh tokens and never write anything to the Desktop profile.
+    """
+    if not sys.platform.startswith("win"):
+        return []
+
+    import time
+
+    candidates: list[dict] = []
+    now = time.time()
+
+    for profile_dir in _claude_desktop_dir_candidates():
+        config_path = profile_dir / "config.json"
+        try:
+            config = json.loads(config_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if not isinstance(config, dict):
+            continue
+
+        key = _claude_desktop_safestorage_key(profile_dir)
+        if not key:
+            continue
+
+        merged: dict = {}
+        for cache_name in ("oauth:tokenCacheV2", "oauth:tokenCache"):
+            encrypted = config.get(cache_name)
+            if not isinstance(encrypted, str):
+                continue
+            raw = _claude_desktop_decrypt(encrypted, key)
+            if not raw:
+                continue
+            try:
+                decoded = json.loads(raw.decode("utf-8"))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                continue
+            if isinstance(decoded, dict):
+                for cache_key, entry in decoded.items():
+                    merged.setdefault(cache_key, entry)
+
+        for cache_key, entry in merged.items():
+            if not isinstance(cache_key, str) or not isinstance(entry, dict):
+                continue
+            if "api.anthropic.com" not in cache_key or "user:profile" not in cache_key:
+                continue
+
+            token = entry.get("token") or entry.get("accessToken")
+            if not isinstance(token, str) or not token.strip():
+                continue
+
+            try:
+                expires_at = float(entry.get("expiresAt") or 0)
+            except (TypeError, ValueError):
+                expires_at = 0
+            if expires_at > 1_000_000_000_000:
+                expires_at /= 1000.0
+            if expires_at and expires_at <= now + CLAUDE_DESKTOP_TOKEN_SAFETY_SECONDS:
+                continue
+
+            full_scope = "user:inference" in cache_key
+            production_client = CLAUDE_DESKTOP_CLIENT_ID in cache_key
+            candidates.append({
+                "access_token": token,
+                "expires_at": expires_at,
+                "subscription_type": entry.get("subscriptionType"),
+                "rate_limit_tier": entry.get("rateLimitTier"),
+                "source": "claude_desktop_oauth",
+                "source_path": str(config_path),
+                "_rank": (
+                    1 if production_client and full_scope else 0,
+                    1 if full_scope else 0,
+                    expires_at,
+                ),
+            })
+
+    candidates.sort(key=lambda item: item["_rank"], reverse=True)
+    for item in candidates:
+        item.pop("_rank", None)
+    return candidates
+
+
+def get_claude_desktop_credentials() -> dict | None:
+    """Return the healthiest live Claude Desktop OAuth access token, if any."""
+    tokens = _claude_desktop_tokens()
+    return tokens[0] if tokens else None
+
+
+def _claude_desktop_detected() -> bool:
+    """True when a Claude Desktop profile exists even if auth cannot be read."""
+    for profile_dir in _claude_desktop_dir_candidates():
+        if (profile_dir / "config.json").exists() or (profile_dir / "Local State").exists():
+            return True
+    return False
+
 CLAUDE_LOCAL_USAGE_STALE_SECONDS = 30 * 60
 
 
@@ -475,17 +809,34 @@ def get_claude_cached_usage() -> dict | None:
 
 
 def get_claude_usage() -> dict:
-    """Fetch Claude Code usage from Anthropic API"""
+    """Fetch Claude subscription usage from an already-authenticated local source."""
     token = get_claude_credentials()
+    source = "claude_code_oauth" if token else None
+    desktop = None
+
+    # Zero-config Desktop fallback. Borrow only a current access token from the
+    # official app; never refresh or mutate Claude Desktop's credential store.
     if not token:
-        # Zero-config fallback: Claude Code itself caches the last server usage
-        # snapshot in ~/.claude.json. This path needs no login, token access, or
-        # network request from cclimits.
+        desktop = get_claude_desktop_credentials()
+        if desktop:
+            token = desktop.get("access_token")
+            source = "claude_desktop_oauth"
+
+    if not token:
+        # Claude Code itself may still have a recent server usage snapshot.
         if cached := get_claude_cached_usage():
             return cached
+
+        if _claude_desktop_detected():
+            hint = (
+                "Claude Desktop detected, but no readable live OAuth token was found. "
+                "Keep Claude Desktop signed in and retry; no Claude CLI login is required."
+            )
+        else:
+            hint = "No existing Claude Code or Claude Desktop session was detected"
         return {
             "error": "No credentials found",
-            "hint": "No Claude Code usage cache found yet; run Claude Code once so it can fetch usage"
+            "hint": hint,
         }
 
     headers = {
@@ -498,6 +849,14 @@ def get_claude_usage() -> dict:
 
     if status == 200 and isinstance(data, dict):
         result: dict = {"status": "ok"}
+        if source:
+            result["source"] = source
+        if desktop:
+            result["source_path"] = desktop.get("source_path")
+            if desktop.get("subscription_type"):
+                result["plan"] = desktop["subscription_type"]
+            elif desktop.get("rate_limit_tier"):
+                result["plan"] = desktop["rate_limit_tier"]
 
         if "five_hour" in data and data["five_hour"]:
             result["five_hour"] = {
@@ -520,6 +879,13 @@ def get_claude_usage() -> dict:
 
         return result
     elif status == 401:
+        if source == "claude_desktop_oauth":
+            if cached := get_claude_cached_usage():
+                return cached
+            return {
+                "error": "Token expired",
+                "hint": "Claude Desktop's cached access token is stale; keep Claude Desktop signed in and retry",
+            }
         return {"error": "Token expired", "hint": "Run 'claude' to re-authenticate"}
     else:
         return {"error": f"HTTP {status}", "details": str(data)[:200]}
@@ -1732,7 +2098,13 @@ def print_section(name: str, data: dict):
         age = data.get("stale_age_seconds", 0)
         print(f"  💤 Stale fallback (last good: {format_cache_age(age)} ago)")
 
-    # Claude Code can provide quota without credentials via its own local cache.
+    # Claude can provide quota from already-authenticated local apps without setup.
+    if data.get("source") == "claude_desktop_oauth":
+        print("  📍 Source: Claude Desktop OAuth (read-only)")
+    elif data.get("source") == "claude_code_oauth":
+        print("  📍 Source: Claude Code OAuth")
+
+    # Claude Code can also provide quota without credentials via its own local cache.
     if data.get("source") == "claude_code_cache":
         age = data.get("source_age_seconds")
         age_text = f" ({format_cache_age(age)} old)" if isinstance(age, int) else ""
