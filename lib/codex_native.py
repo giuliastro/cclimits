@@ -387,7 +387,7 @@ def get_native_codex_usage(timeout: float = 10.0) -> dict | None:
         if "error" in init_response:
             return {
                 "error": "Codex native quota unavailable",
-                "details": f"initialize failed: {init_response.get('error')}",
+                "details": "initialize request failed",
                 "native_source": "codex_app_server",
             }
 
@@ -427,7 +427,7 @@ def get_native_codex_usage(timeout: float = 10.0) -> dict | None:
         if "error" in rate_response:
             return {
                 "error": "Codex native quota unavailable",
-                "details": f"account/rateLimits/read failed: {rate_response.get('error')}",
+                "details": "account/rateLimits/read request failed",
                 "native_source": "codex_app_server",
             }
 

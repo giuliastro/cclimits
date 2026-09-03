@@ -952,7 +952,7 @@ def get_codex_usage() -> dict:
         if native_error:
             return {
                 "error": native_error.get("error", "Codex native quota unavailable"),
-                "details": native_error.get("details"),
+                "details": "Codex app-server did not return a usable quota snapshot",
                 "hint": "Codex was detected but its native rate-limit snapshot was unavailable and no fallback credentials were found",
                 "native_source": "codex_app_server",
             }
@@ -1061,8 +1061,6 @@ def get_codex_usage() -> dict:
             result["api_key_valid"] = True
             if native_error:
                 result["native_fallback_reason"] = native_error.get("error")
-                if native_error.get("details"):
-                    result["native_fallback_details"] = native_error.get("details")
             result["note"] = "API key valid but no subscription quota API"
             result["hint"] = "Check usage at https://platform.openai.com/usage"
             return result

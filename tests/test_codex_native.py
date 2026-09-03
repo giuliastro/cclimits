@@ -309,6 +309,19 @@ def test_native_failure_without_fallback_credentials_is_explicit():
     assert "fallback credentials" in result["hint"]
 
 
+def test_native_failure_details_do_not_expose_local_paths():
+    with patch("cclimits.get_native_codex_usage", return_value={
+            "error": "Codex native quota unavailable",
+            "details": "server failed at /home/alice/.codex/session",
+         }), \
+         patch("cclimits.get_openai_credentials", return_value={}):
+        result = cclimits.get_codex_usage()
+
+    payload = json.dumps(result)
+    assert "/home/alice" not in payload
+    assert result["details"] == "Codex app-server did not return a usable quota snapshot"
+
+
 @patch("codex_native._codex_command", return_value=["/home/alice/private/codex"])
 @patch("codex_native.subprocess.Popen", side_effect=FileNotFoundError(2, "No such file", "/home/alice/private/codex"))
 def test_native_start_failure_does_not_expose_executable_path(_mock_popen, _mock_command):
