@@ -194,4 +194,7 @@ def test_raw_key_is_not_exposed_in_success_payload():
          patch("cclimits.http_get", return_value=(403, "Forbidden")):
         result = cclimits.get_opencode_zen_usage()
 
-    assert "super-secret-key" not in json.dumps(result)
+    payload = json.dumps(result)
+    assert "super-secret-key" not in payload
+    assert "safe-fingerprint" not in payload
+    assert "key_fingerprint" not in result
