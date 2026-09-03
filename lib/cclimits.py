@@ -392,8 +392,9 @@ def get_claude_credentials() -> str | None:
 # Claude Desktop's own copy.
 #
 # Windows safeStorage implementation adapted from the MIT-licensed
-# huanchong-99/claude-usage-assistant project. Profile discovery also covers the
-# Microsoft Store/MSIX layout used by current Claude Desktop releases.
+# huanchong-99/claude-usage-assistant project. Its MIT notice is preserved in
+# THIRD_PARTY_NOTICES.md. Profile discovery also covers the Microsoft Store/MSIX
+# layout used by current Claude Desktop releases.
 CLAUDE_DESKTOP_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
 CLAUDE_DESKTOP_TOKEN_SAFETY_SECONDS = 120
 
@@ -438,10 +439,10 @@ def _claude_desktop_dir_candidates() -> list[Path]:
                 candidates.extend(item[2] for item in store_profiles)
         except (OSError, PermissionError):
             pass
-    elif sys.platform == "darwin":
-        candidates.append(Path.home() / "Library" / "Application Support" / "Claude")
     else:
-        candidates.append(Path.home() / ".config" / "Claude")
+        # Desktop safeStorage extraction is currently implemented only for Windows.
+        # Avoid detecting profiles on platforms where we cannot read their OAuth token.
+        return []
 
     seen = set()
     result = []
@@ -692,7 +693,6 @@ def _claude_desktop_tokens() -> list[dict]:
                 "subscription_type": entry.get("subscriptionType"),
                 "rate_limit_tier": entry.get("rateLimitTier"),
                 "source": "claude_desktop_oauth",
-                "source_path": str(config_path),
                 "_rank": (
                     1 if production_client and full_scope else 0,
                     1 if full_scope else 0,
@@ -769,7 +769,6 @@ def get_claude_cached_usage() -> dict | None:
         result: dict = {
             "status": "ok",
             "source": "claude_code_cache",
-            "source_path": str(state_path),
         }
 
         for source_key, result_key in (
@@ -797,13 +796,17 @@ def get_claude_cached_usage() -> dict | None:
             continue
 
         fetched_at_ms = cached.get("fetchedAtMs")
-        if isinstance(fetched_at_ms, (int, float)) and fetched_at_ms > 0:
-            now_ms = datetime.now(timezone.utc).timestamp() * 1000
-            age_seconds = max(0, int((now_ms - fetched_at_ms) / 1000))
-            result["source_age_seconds"] = age_seconds
-            if age_seconds > CLAUDE_LOCAL_USAGE_STALE_SECONDS:
-                result["source_stale"] = True
+        # Undated or stale local snapshots are not safe automatic fallbacks:
+        # compact output must never present them as live/healthy quota.
+        if not isinstance(fetched_at_ms, (int, float)) or fetched_at_ms <= 0:
+            continue
 
+        now_ms = datetime.now(timezone.utc).timestamp() * 1000
+        age_seconds = max(0, int((now_ms - fetched_at_ms) / 1000))
+        if age_seconds > CLAUDE_LOCAL_USAGE_STALE_SECONDS:
+            continue
+
+        result["source_age_seconds"] = age_seconds
         return result
 
     return None
@@ -828,13 +831,18 @@ def get_claude_usage() -> dict:
         if cached := get_claude_cached_usage():
             return cached
 
-        if _claude_desktop_detected():
+        if sys.platform.startswith("win") and _claude_desktop_detected():
             hint = (
                 "Claude Desktop detected, but no readable live OAuth token was found. "
                 "Keep Claude Desktop signed in and retry; no Claude CLI login is required."
             )
+        elif sys.platform.startswith("win"):
+            hint = "No existing Claude Code or readable Claude Desktop session was detected"
         else:
-            hint = "No existing Claude Code or Claude Desktop session was detected"
+            hint = (
+                "No existing Claude Code session was detected; "
+                "Claude Desktop OAuth discovery is currently Windows-only"
+            )
         return {
             "error": "No credentials found",
             "hint": hint,
@@ -853,7 +861,6 @@ def get_claude_usage() -> dict:
         if source:
             result["source"] = source
         if desktop:
-            result["source_path"] = desktop.get("source_path")
             if desktop.get("subscription_type"):
                 result["plan"] = desktop["subscription_type"]
             elif desktop.get("rate_limit_tier"):
@@ -2555,7 +2562,7 @@ def _render_copilot(data, window, use_color, show_resets=False):
 
 PROVIDERS = [
     {"key": "claude", "title": "Claude Code", "oneline_label": "Claude",
-     "arg_help": "Only check Claude Code", "fetch": "get_claude_usage",
+     "arg_help": "Only check Claude Code (Claude Desktop OAuth auto-discovery on Windows)", "fetch": "get_claude_usage",
      "gated": False, "creds": None, "oneline_order": 0,
      "render_oneline": _make_str_pct_renderer("Claude", lambda d: d.get("status") == "ok" or "five_hour" in d, "five_hour", "seven_day")},
     {"key": "codex", "title": "OpenAI Codex", "oneline_label": "Codex",
@@ -2640,9 +2647,10 @@ def main():
 
     epilog = """
 Credential Locations (auto-discovered):
-  Claude     ~/.claude.json cached usage (zero-login fallback)
+  Claude     ~/.claude.json cached usage (fresh snapshots only)
               ~/.claude/.credentials.json (Linux)
               macOS Keychain "Claude Code-credentials" (macOS)
+              Claude Desktop OAuth (Windows only, read-only; standard + MSIX profiles)
   Codex      ~/.codex/auth.json
   Gemini     ~/.gemini/oauth_creds.json (auto-refreshes expired tokens)
   Z.AI       $ZAI_KEY or $ZAI_API_KEY environment variable
