@@ -130,6 +130,25 @@ class TestCLIArgumentParsing:
         mock_zai.assert_not_called()
 
 
+class TestCacheWriteControl:
+    """Embedding mode can fetch without mutating the cclimits cache."""
+
+    @patch('cclimits.write_cache')
+    @patch('cclimits.get_claude_usage')
+    @patch('sys.argv', ['cclimits', '--claude', '--json', '--no-cache-write', '--no-stale-fallback'])
+    def test_no_cache_write_skips_cache_mutation(self, mock_claude, mock_write_cache, capsys):
+        mock_claude.return_value = {
+            "status": "ok",
+            "five_hour": {"used": "12.0%", "remaining": "88.0%"},
+        }
+
+        main()
+
+        result = json.loads(capsys.readouterr().out)
+        assert result["claude"]["status"] == "ok"
+        mock_write_cache.assert_not_called()
+
+
 class TestJSONOutput:
     """Tests for JSON output mode."""
 
