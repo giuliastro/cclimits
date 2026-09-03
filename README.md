@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml/badge.svg)](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml)
 
-Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), Synthetic.new, and GitHub Copilot. It also supports checking keys used by **Aider** and **Continue**.
+Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, OpenCode Go, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), Synthetic.new, and GitHub Copilot. It also supports checking keys used by **Aider** and **Continue**.
 
 ## Features
 
@@ -10,6 +10,7 @@ Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, Google Gem
 - **Auto-refreshes expired tokens** (Gemini OAuth, Antigravity OAuth)
 - **Multiple output formats**: detailed, JSON, compact one-liner
 - **Caching support** for fast statusline integration
+- **Zero-config OpenCode Go** usage discovery from existing OpenCode, Pi, or OMP credentials
 - **Cross-platform**: macOS and Linux support
 
 ## Installation
@@ -45,6 +46,7 @@ chmod +x ~/.local/bin/cclimits
 cclimits              # Check all tools (detailed)
 cclimits --claude     # Claude only
 cclimits --codex      # Codex only
+cclimits --opencode-go # OpenCode Go only
 cclimits --gemini     # Gemini only
 cclimits --zai        # Z.AI only
 cclimits --openrouter # OpenRouter only
@@ -246,6 +248,7 @@ Credentials are auto-discovered from these locations:
 |------|----------|
 | **Claude** | `~/.claude/.credentials.json` (Linux) or macOS Keychain |
 | **Codex** | `~/.codex/auth.json` |
+| **OpenCode Go** | `$OPENCODE_GO_API_KEY` / `$OPENCODE_API_KEY`, OpenCode `auth.json`, Pi `auth.json`, or OMP `agent.db` (read-only) |
 | **Gemini** | `~/.gemini/oauth_creds.json` (auto-refreshes) |
 | **Z.AI** | `$ZAI_KEY` or `$ZAI_API_KEY` environment variable |
 | **OpenRouter** | `$OPENROUTER_API_KEY` environment variable |
@@ -268,6 +271,10 @@ export OPENROUTER_API_KEY=your-key  # Add to ~/.zshrc or ~/.bashrc
 export MOONSHOT_API_KEY=your-key    # Add to ~/.zshrc or ~/.bashrc
 export SYNTHETIC_API_KEY=your-key   # Add to ~/.zshrc or ~/.bashrc
 ```
+
+OpenCode Go does not initiate login. It reuses an existing OpenCode/Zen key
+and queries only the usage endpoint; a normal Zen key without a Go entitlement
+is reported as `No OpenCode Go subscription`.
 
 ### Antigravity Authentication
 
@@ -294,6 +301,7 @@ export GEMINI_OAUTH_CLIENT_SECRET="..."
 
 **Note on Integrated Providers:**
 - **GitHub Copilot**: Supported via the undocumented `copilot_internal/user` endpoint that the Copilot editor plugins themselves use (there is still no supported public API). Any GitHub token for an account with a Copilot subscription works — editor sign-in files, gh CLI, or a plain `GITHUB_TOKEN`. A token whose account has *no* Copilot subscription is hidden from check-all output (visible with `--copilot` or `--json`). The check consumes no premium requests.
+- **OpenCode Go**: Uses only `https://opencode.ai/zen/go/v1/usage` and reuses existing OpenCode, Pi, or OMP credentials. A regular Zen key is not treated as a Go subscription; explicit checks report `No OpenCode Go subscription` when the entitlement is absent. No login or inference is initiated.
 - **Cursor / Windsurf**: Not supported yet as they do not provide public quota APIs.
 
 ## Requirements

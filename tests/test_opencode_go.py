@@ -1,6 +1,7 @@
 """Tests for zero-config OpenCode Go quota discovery."""
 
 import json
+import sqlite3
 from unittest.mock import patch
 
 from cclimits import (
@@ -10,6 +11,7 @@ from cclimits import (
     _opencode_auth_paths,
     get_opencode_go_credentials,
     get_opencode_go_usage,
+    print_oneline,
 )
 
 
@@ -50,6 +52,52 @@ def test_reads_existing_opencode_auth_json_zero_config(tmp_path):
     assert result["provider_id"] == "opencode-go"
     assert result["source"] == "OpenCode auth.json"
     assert str(tmp_path) not in result["source"]
+
+
+def test_reads_pi_auth_json_for_existing_zen_key(tmp_path):
+    agent = tmp_path / "pi-agent"
+    agent.mkdir()
+    (agent / "auth.json").write_text(json.dumps({
+        "opencode": {"type": "api_key", "key": "existing-zen-key"},
+    }))
+
+    with patch.dict("cclimits.os.environ", {"PI_CODING_AGENT_DIR": str(agent)}, clear=True), \
+         patch("cclimits.Path.home", return_value=tmp_path / "home"):
+        result = get_opencode_go_credentials()
+
+    assert result == {
+        "key": "existing-zen-key",
+        "source": "Pi auth.json",
+        "provider_id": "opencode",
+    }
+
+
+def test_reads_omp_agent_db_read_only_for_existing_zen_key(tmp_path):
+    home = tmp_path / "home"
+    db = home / ".omp" / "agent" / "agent.db"
+    db.parent.mkdir(parents=True)
+    conn = sqlite3.connect(db)
+    conn.execute(
+        "CREATE TABLE auth_credentials (id INTEGER PRIMARY KEY, provider TEXT, credential_type TEXT, data TEXT, disabled_cause TEXT)"
+    )
+    conn.execute(
+        "INSERT INTO auth_credentials(provider, credential_type, data, disabled_cause) VALUES (?, ?, ?, NULL)",
+        ("opencode-zen", "api_key", json.dumps({"key": "existing-zen-key"})),
+    )
+    conn.commit()
+    conn.close()
+    before = db.stat().st_mtime_ns
+
+    with patch.dict("cclimits.os.environ", {}, clear=True), \
+         patch("cclimits.Path.home", return_value=home):
+        result = get_opencode_go_credentials()
+
+    assert result == {
+        "key": "existing-zen-key",
+        "source": "OMP agent.db",
+        "provider_id": "opencode-zen",
+    }
+    assert before == db.stat().st_mtime_ns
 
 
 def test_env_key_precedes_disk(tmp_path):
@@ -157,3 +205,13 @@ def test_403_is_no_go_entitlement(mock_get, mock_creds):
     result = get_opencode_go_usage()
 
     assert result["error"] == OPENCODE_GO_NO_SUB_ERROR
+
+
+def test_oneline_explains_missing_go_entitlement(capsys):
+    print_oneline(
+        {"opencode_go": {"error": OPENCODE_GO_NO_SUB_ERROR}},
+        window="both",
+        show_resets=True,
+    )
+
+    assert capsys.readouterr().out.strip() == "OpenCode Go: no subscription"

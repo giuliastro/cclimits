@@ -8,6 +8,7 @@ Kimi, Google Antigravity, and Synthetic.new
 from __future__ import annotations
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -271,7 +272,7 @@ def _extract_opencode_go_credential(auth: object) -> tuple[str, str] | None:
             continue
 
         auth_type = entry.get("type")
-        if auth_type not in (None, "api"):
+        if auth_type not in (None, "api", "api_key"):
             continue
 
         for key_name in ("key", "apiKey", "api_key"):
@@ -279,6 +280,106 @@ def _extract_opencode_go_credential(auth: object) -> tuple[str, str] | None:
             if isinstance(value, str) and value.strip():
                 return value.strip(), provider_id
 
+    return None
+
+
+def _pi_auth_paths() -> list[Path]:
+    paths = []
+    if agent_dir := os.environ.get("PI_CODING_AGENT_DIR"):
+        paths.append(Path(agent_dir).expanduser() / "auth.json")
+    paths.append(Path.home() / ".pi" / "agent" / "auth.json")
+    seen = set()
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _omp_agent_dirs() -> list[Path]:
+    home = Path.home()
+    root = home / (os.environ.get("PI_CONFIG_DIR") or ".omp")
+    paths = []
+    if agent_dir := os.environ.get("PI_CODING_AGENT_DIR"):
+        paths.append(Path(agent_dir).expanduser())
+    profile = os.environ.get("OMP_PROFILE") or os.environ.get("PI_PROFILE")
+    if profile and profile.strip() and profile.strip() != "default":
+        paths.append(root / "profiles" / profile.strip() / "agent")
+    paths.append(root / "agent")
+    profiles = root / "profiles"
+    try:
+        if profiles.is_dir():
+            paths.extend(p / "agent" for p in profiles.iterdir() if p.is_dir())
+    except OSError:
+        pass
+    seen = set()
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _read_opencode_zen_json_key(path: Path) -> tuple[str, str] | None:
+    try:
+        auth = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(auth, dict):
+        return None
+    for provider_id in ("opencode-go", "opencode", "opencode-zen"):
+        entry = auth.get(provider_id)
+        if not isinstance(entry, dict) or entry.get("type") not in (None, "api", "api_key"):
+            continue
+        for key_name in ("key", "apiKey", "api_key"):
+            value = entry.get(key_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), provider_id
+    return None
+
+
+def _read_omp_zen_key(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(auth_credentials)").fetchall()
+            if len(row) > 1
+        }
+        if not {"provider", "credential_type", "data"}.issubset(columns):
+            return None
+        sql = "SELECT credential_type, data FROM auth_credentials WHERE provider = ?"
+        if "disabled_cause" in columns:
+            sql += " AND disabled_cause IS NULL"
+        if "id" in columns:
+            sql += " ORDER BY id DESC"
+        for credential_type, data in conn.execute(sql, ("opencode-zen",)).fetchall():
+            if credential_type != "api_key" or not isinstance(data, str):
+                continue
+            try:
+                parsed = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                for key_name in ("key", "apiKey", "api_key"):
+                    value = parsed.get(key_name)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
     return None
 
 
@@ -325,6 +426,26 @@ def get_opencode_go_credentials() -> dict | None:
                 # sufficient for normal CLI/JSON/cache output.
                 "source": "OpenCode auth.json",
                 "provider_id": provider_id,
+            }
+
+    # Pi and Oh My Pi reuse the same OpenCode/Zen workspace key. Read those
+    # stores as additional zero-config sources so a valid Zen key can be
+    # distinguished from a missing Go entitlement on the Go-only command.
+    for path in _pi_auth_paths():
+        if extracted := _read_opencode_zen_json_key(path):
+            key, provider_id = extracted
+            return {
+                "key": key,
+                "source": "Pi auth.json",
+                "provider_id": provider_id,
+            }
+
+    for agent_dir in _omp_agent_dirs():
+        if key := _read_omp_zen_key(agent_dir / "agent.db"):
+            return {
+                "key": key,
+                "source": "OMP agent.db",
+                "provider_id": "opencode-zen",
             }
 
     return None
@@ -453,7 +574,7 @@ def get_opencode_go_usage() -> dict:
     if status != 200 or not isinstance(data, dict):
         return {
             "error": f"HTTP {status}" if status else "Could not fetch usage",
-            "details": str(data)[:200],
+            "details": "OpenCode Go usage endpoint returned no usable response",
         }
 
     usage = data.get("usage")
@@ -2893,6 +3014,8 @@ def print_oneline(results: dict, window: str = "5h", use_color: bool = False, ca
         """Missing credentials / expired tokens are config issues, not outages — show them differently"""
         if data.get("error") == NO_CREDS_ERROR:
             return nokey_icon
+        if data.get("error") == OPENCODE_GO_NO_SUB_ERROR:
+            return "no subscription"
         if data.get("token_status") == "expired" or data.get("error") == "Token expired":
             return expired_icon
         return error_icon
