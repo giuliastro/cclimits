@@ -68,13 +68,16 @@ class TestGetClaudeUsage:
 
     @patch('cclimits.get_claude_credentials')
     def test_no_credentials(self, mock_creds):
-        """Test when no credentials are found."""
+        """Test when no credentials are found without touching real local sessions."""
         mock_creds.return_value = None
 
-        result = get_claude_usage()
+        with patch('cclimits.get_claude_desktop_credentials', return_value=None), \
+             patch('cclimits.get_claude_cached_usage', return_value=None), \
+             patch('cclimits._claude_desktop_detected', return_value=False):
+            result = get_claude_usage()
 
         assert result["error"] == "No credentials found"
-        assert "No existing Claude Code or Claude Desktop session" in result["hint"]
+        assert "No existing Claude Code" in result["hint"]
 
     @patch('cclimits.get_claude_credentials')
     @patch('cclimits.http_get')
