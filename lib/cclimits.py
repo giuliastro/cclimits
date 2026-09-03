@@ -269,7 +269,6 @@ def get_opencode_zen_usage() -> dict:
     for identity in identities:
         state, status, _response = _opencode_zen_key_status(identity["key"])
         public = {
-            "fingerprint": identity["fingerprint"],
             "harnesses": identity["harnesses"],
             "sources": identity["sources"],
             "validation": state,
@@ -284,7 +283,6 @@ def get_opencode_zen_usage() -> dict:
                 "plan": "OpenCode Zen (pay as you go)",
                 "auth": ", ".join(identity["harnesses"]),
                 "auth_sources": identity["sources"],
-                "key_fingerprint": identity["fingerprint"],
                 "api_key_valid": True,
                 "balance_status": "unavailable_by_api",
                 "balance_note": (
@@ -311,15 +309,12 @@ def get_opencode_zen_usage() -> dict:
                     "billing_source": "opencode_web_session",
                     "browser": billing.get("browser"),
                     "browser_source": billing.get("browser_source"),
-                    "workspace_id": billing.get("workspace_id"),
                     "workspace_count": billing.get("workspace_count"),
                 })
                 if billing.get("monthly_limit_usd") is not None:
                     result["monthly_limit_usd"] = billing["monthly_limit_usd"]
                 if billing.get("usage_updated_at") is not None:
                     result["usage_updated_at"] = billing["usage_updated_at"]
-                if billing.get("web_session_fingerprint"):
-                    result["web_session_fingerprint"] = billing["web_session_fingerprint"]
                 result.pop("balance_note", None)
 
             return result
@@ -2231,9 +2226,6 @@ def print_section(name: str, data: dict):
         print("  📍 Sources:")
         for source in data["auth_sources"]:
             print(f"    - {source}")
-    if "key_fingerprint" in data:
-        print(f"  🆔 Key: …{data['key_fingerprint']}")
-
     # Show status
     if data.get("status") == "ok":
         print("  ✅ Connected")
