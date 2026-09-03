@@ -24,6 +24,12 @@ def isolated_cache(tmp_path, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def no_ambient_opencode_go_creds(monkeypatch):
+    """Prevent generic check-all tests from using a developer's real OpenCode key."""
+    monkeypatch.setattr(cclimits, "get_opencode_go_credentials", lambda: None)
+
+
+@pytest.fixture(autouse=True)
 def no_ambient_copilot_creds(monkeypatch):
     """GITHUB_TOKEN is commonly exported (and gh CLI config commonly present),
     which would make every check-all test hit the live Copilot endpoint.
