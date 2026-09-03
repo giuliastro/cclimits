@@ -140,7 +140,6 @@ def test_fetch_billing_from_existing_session_never_returns_cookie():
     assert result["balance_usd"] == 20.0
     assert result["monthly_usage_usd"] == 5.0
     assert result["monthly_limit_usd"] == 30
-    assert result["workspace_id"] == "wrk_TEST123"
     assert result["browser"] == "chrome"
     assert "very-secret-cookie" not in json.dumps(result)
     assert any(h["Cookie"] == "__Host-auth=very-secret-cookie" for h in seen_headers)
@@ -157,11 +156,9 @@ def test_zen_usage_overlays_authoritative_web_billing():
         "balance_usd": 9.75,
         "monthly_usage_usd": 4.25,
         "monthly_limit_usd": 25.0,
-        "workspace_id": "wrk_TEST123",
         "workspace_count": 1,
         "browser": "chrome",
         "browser_source": "chrome browser profile",
-        "web_session_fingerprint": "web-fingerprint",
         "usage_updated_at": "2026-08-30T18:00:00Z",
     }
 
@@ -179,6 +176,9 @@ def test_zen_usage_overlays_authoritative_web_billing():
     assert result["browser"] == "chrome"
     assert result["browser_source"] == "chrome browser profile"
     assert "cookie_header" not in result
+    assert "workspace_id" not in result
+    assert "web_session_fingerprint" not in result
+    assert "key_fingerprint" not in result
     assert "very-secret-cookie" not in json.dumps(result)
     assert "/home/test" not in json.dumps(result)
 
