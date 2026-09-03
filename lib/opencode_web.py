@@ -659,11 +659,9 @@ def fetch_billing_from_session(
             continue
         return {
             **billing,
-            "workspace_id": workspace_id,
             "workspace_count": len(workspace_ids),
             "browser": session.get("browser"),
             "browser_source": session.get("source"),
-            "web_session_fingerprint": session.get("fingerprint"),
         }
 
     return None
