@@ -2,12 +2,13 @@
 
 [![CI](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml/badge.svg)](https://github.com/cruzanstx/cclimits/actions/workflows/ci.yml)
 
-Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), Synthetic.new, and GitHub Copilot. It also supports checking keys used by **Aider** and **Continue**.
+Check quota/usage for AI coding CLI tools: Claude Code, OpenAI Codex, OpenCode Zen, Google Gemini CLI, Google Antigravity, Z.AI, OpenRouter, Kimi K2 (Moonshot AI), Synthetic.new, and GitHub Copilot. It also supports checking keys used by **Aider** and **Continue**.
 
 ## Features
 
 - **Auto-discovers credentials** from standard locations
 - **Auto-refreshes expired tokens** (Gemini OAuth, Antigravity OAuth)
+- **Zero-config OpenCode Zen** discovery across OpenCode, Pi, and OMP
 - **Multiple output formats**: detailed, JSON, compact one-liner
 - **Caching support** for fast statusline integration
 - **Cross-platform**: macOS and Linux support
@@ -45,6 +46,7 @@ chmod +x ~/.local/bin/cclimits
 cclimits              # Check all tools (detailed)
 cclimits --claude     # Claude only
 cclimits --codex      # Codex only
+cclimits --opencode-zen # OpenCode Zen only
 cclimits --gemini     # Gemini only
 cclimits --zai        # Z.AI only
 cclimits --openrouter # OpenRouter only
@@ -246,6 +248,7 @@ Credentials are auto-discovered from these locations:
 |------|----------|
 | **Claude** | `~/.claude/.credentials.json` (Linux) or macOS Keychain |
 | **Codex** | `~/.codex/auth.json` |
+| **OpenCode Zen** | OpenCode `auth.json`, Pi `auth.json`, OMP `agent.db` / `.env`, or `$OPENCODE_API_KEY` (read-only) |
 | **Gemini** | `~/.gemini/oauth_creds.json` (auto-refreshes) |
 | **Z.AI** | `$ZAI_KEY` or `$ZAI_API_KEY` environment variable |
 | **OpenRouter** | `$OPENROUTER_API_KEY` environment variable |
@@ -268,6 +271,12 @@ export OPENROUTER_API_KEY=your-key  # Add to ~/.zshrc or ~/.bashrc
 export MOONSHOT_API_KEY=your-key    # Add to ~/.zshrc or ~/.bashrc
 export SYNTHETIC_API_KEY=your-key   # Add to ~/.zshrc or ~/.bashrc
 ```
+
+OpenCode Zen validation uses only the usage endpoint and does not perform
+inference. Its API-key balance is not exposed by that endpoint. On Linux,
+cclimits may additionally reuse an already authenticated `opencode.ai`
+browser session read-only for billing; it never starts login or changes browser
+profiles. Browser billing discovery is not available on macOS or Windows.
 
 ### Antigravity Authentication
 
@@ -294,6 +303,7 @@ export GEMINI_OAUTH_CLIENT_SECRET="..."
 
 **Note on Integrated Providers:**
 - **GitHub Copilot**: Supported via the undocumented `copilot_internal/user` endpoint that the Copilot editor plugins themselves use (there is still no supported public API). Any GitHub token for an account with a Copilot subscription works — editor sign-in files, gh CLI, or a plain `GITHUB_TOKEN`. A token whose account has *no* Copilot subscription is hidden from check-all output (visible with `--copilot` or `--json`). The check consumes no premium requests.
+- **OpenCode Zen**: Existing keys are discovered from OpenCode, Pi, and OMP without changing their files; the same key across harnesses is shown as one identity. Browser billing discovery is Linux-only and requires an already authenticated browser session that cclimits can read without modifying the profile.
 - **Cursor / Windsurf**: Not supported yet as they do not provide public quota APIs.
 
 ## Requirements
