@@ -39,7 +39,7 @@ def test_reads_claude_code_cached_usage_without_credentials(tmp_path):
     assert result is not None
     assert result["status"] == "ok"
     assert result["source"] == "claude_code_cache"
-    assert result["source_path"] == str(state)
+    assert "source_path" not in result
     assert result["five_hour"]["used"] == "37.5%"
     assert result["five_hour"]["remaining"] == "62.5%"
     assert result["five_hour"]["resets_at"] == "2099-01-01T12:00:00+00:00"
@@ -50,7 +50,7 @@ def test_reads_claude_code_cached_usage_without_credentials(tmp_path):
     assert "source_stale" not in result
 
 
-def test_marks_old_claude_code_snapshot_stale(tmp_path):
+def test_rejects_old_claude_code_snapshot(tmp_path):
     state = tmp_path / ".claude.json"
     state.write_text(json.dumps({
         "cachedUsageUtilization": {
@@ -65,9 +65,24 @@ def test_marks_old_claude_code_snapshot_stale(tmp_path):
          patch.dict("cclimits.os.environ", {}, clear=True):
         result = get_claude_cached_usage()
 
-    assert result is not None
-    assert result["source_stale"] is True
-    assert result["source_age_seconds"] >= 7190
+    assert result is None
+
+
+def test_rejects_undated_claude_code_snapshot(tmp_path):
+    state = tmp_path / ".claude.json"
+    state.write_text(json.dumps({
+        "cachedUsageUtilization": {
+            "utilization": {
+                "five_hour": {"utilization": 10},
+            },
+        }
+    }))
+
+    with patch("cclimits.Path.home", return_value=tmp_path), \
+         patch.dict("cclimits.os.environ", {}, clear=True):
+        result = get_claude_cached_usage()
+
+    assert result is None
 
 
 def test_no_oauth_credentials_falls_back_to_claude_code_cache():
@@ -77,6 +92,7 @@ def test_no_oauth_credentials_falls_back_to_claude_code_cache():
         "five_hour": {"used": "12.0%", "remaining": "88.0%"},
     }
     with patch("cclimits.get_claude_credentials", return_value=None), \
+         patch("cclimits.get_claude_desktop_credentials", return_value=None), \
          patch("cclimits.get_claude_cached_usage", return_value=cached), \
          patch("cclimits.http_get") as http_get:
         result = get_claude_usage()
@@ -122,6 +138,7 @@ def test_desktop_oauth_wins_over_local_usage_cache():
 
     assert result["status"] == "ok"
     assert result["source"] == "claude_desktop_oauth"
+    assert "source_path" not in result
     assert result["plan"] == "pro"
     assert result["five_hour"]["remaining"] == "82.0%"
     assert result["seven_day"]["remaining"] == "58.0%"
@@ -171,6 +188,7 @@ def test_parses_desktop_token_cache_read_only(tmp_path):
     assert tokens[0]["subscription_type"] == "pro"
     assert "refresh_token" not in tokens[0]
     assert tokens[0]["source"] == "claude_desktop_oauth"
+    assert "source_path" not in tokens[0]
 
 
 def test_ignores_expired_desktop_token(tmp_path):
@@ -215,3 +233,19 @@ def test_windows_desktop_discovery_includes_msix_profile(tmp_path):
 
     assert dirs[0] == standard
     assert msix in dirs
+
+
+def test_desktop_discovery_is_windows_only():
+    with patch("cclimits.sys.platform", "darwin"):
+        assert _claude_desktop_dir_candidates() == []
+
+
+def test_non_windows_no_credentials_hint_is_accurate():
+    with patch("cclimits.sys.platform", "darwin"), \
+         patch("cclimits.get_claude_credentials", return_value=None), \
+         patch("cclimits.get_claude_desktop_credentials", return_value=None), \
+         patch("cclimits.get_claude_cached_usage", return_value=None):
+        result = get_claude_usage()
+
+    assert result["error"] == "No credentials found"
+    assert "Desktop OAuth discovery is currently Windows-only" in result["hint"]
