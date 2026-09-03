@@ -728,9 +728,9 @@ def get_claude_cached_usage() -> dict | None:
     Claude Code writes the latest server-provided usage snapshot to the
     account-wide ~/.claude.json file under cachedUsageUtilization. Reading
     this file is zero-setup, read-only, and does not expose or refresh OAuth
-    credentials. The snapshot may be older than the current process, so callers
-    receive its age and a staleness marker instead of silently treating it as
-    live data.
+    credentials. Only timestamped snapshots younger than the local freshness
+    threshold are returned, so compact output cannot silently present stale or
+    undated quota as live data.
     """
     state_paths = []
 
