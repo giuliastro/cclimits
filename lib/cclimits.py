@@ -8,6 +8,7 @@ Kimi, Google Antigravity, and Synthetic.new
 from __future__ import annotations
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 from collections.abc import Callable
@@ -104,12 +105,14 @@ def read_cache(ttl: int, max_age: int | None = None) -> tuple[dict, int] | None:
 
 NO_CREDS_ERROR = "No credentials found"
 COPILOT_NO_SUB_ERROR = "No Copilot subscription"
+OPENCODE_GO_NO_SUB_ERROR = "No OpenCode Go subscription"
 
 # Error strings that signal a config/auth problem the user must fix, not a
 # transient outage.  These are excluded from stale-cache fallback.
 _NON_TRANSIENT_ERRORS = frozenset({
     NO_CREDS_ERROR,
     COPILOT_NO_SUB_ERROR,
+    OPENCODE_GO_NO_SUB_ERROR,
     "Token expired",
     "Invalid API key",
     "Forbidden",
@@ -216,6 +219,388 @@ def apply_stale_fallback(results: dict, cached_data: dict, cached_age: int,
                 updated[key] = stale
     return updated
 
+
+
+### OpenCode Go Functions
+
+OPENCODE_GO_USAGE_URL = "https://opencode.ai/zen/go/v1/usage"
+
+
+def _opencode_auth_paths() -> list[Path]:
+    """Return OpenCode auth.json candidates in discovery order.
+
+    OpenCode itself stores auth.json under XDG_DATA_HOME/opencode or, by
+    default, ~/.local/share/opencode on every platform. Extra Windows
+    AppData candidates are harmless compatibility fallbacks for packaged
+    builds and third-party launchers.
+    """
+    paths: list[Path] = []
+
+    if xdg := os.environ.get("XDG_DATA_HOME"):
+        paths.append(Path(xdg).expanduser() / "opencode" / "auth.json")
+
+    paths.append(Path.home() / ".local" / "share" / "opencode" / "auth.json")
+
+    if sys.platform.startswith("win"):
+        if local := os.environ.get("LOCALAPPDATA"):
+            paths.append(Path(local) / "opencode" / "auth.json")
+        if roaming := os.environ.get("APPDATA"):
+            paths.append(Path(roaming) / "opencode" / "auth.json")
+
+    seen = set()
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(path)
+    return result
+
+
+def _extract_opencode_go_credential(auth: object) -> tuple[str, str] | None:
+    """Extract an existing OpenCode Go API key without mutating auth state."""
+    if not isinstance(auth, dict):
+        return None
+
+    # Current OpenCode uses "opencode-go". Accept "opencode" as a compatibility
+    # fallback because older/community builds may store the same workspace key
+    # under the generic Zen provider.
+    for provider_id in ("opencode-go", "opencode"):
+        entry = auth.get(provider_id)
+        if not isinstance(entry, dict):
+            continue
+
+        auth_type = entry.get("type")
+        if auth_type not in (None, "api", "api_key"):
+            continue
+
+        for key_name in ("key", "apiKey", "api_key"):
+            value = entry.get(key_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), provider_id
+
+    return None
+
+
+def _pi_auth_paths() -> list[Path]:
+    paths = []
+    if agent_dir := os.environ.get("PI_CODING_AGENT_DIR"):
+        paths.append(Path(agent_dir).expanduser() / "auth.json")
+    paths.append(Path.home() / ".pi" / "agent" / "auth.json")
+    seen = set()
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _omp_agent_dirs() -> list[Path]:
+    home = Path.home()
+    root = home / (os.environ.get("PI_CONFIG_DIR") or ".omp")
+    paths = []
+    if agent_dir := os.environ.get("PI_CODING_AGENT_DIR"):
+        paths.append(Path(agent_dir).expanduser())
+    profile = os.environ.get("OMP_PROFILE") or os.environ.get("PI_PROFILE")
+    if profile and profile.strip() and profile.strip() != "default":
+        paths.append(root / "profiles" / profile.strip() / "agent")
+    paths.append(root / "agent")
+    profiles = root / "profiles"
+    try:
+        if profiles.is_dir():
+            paths.extend(p / "agent" for p in profiles.iterdir() if p.is_dir())
+    except OSError:
+        pass
+    seen = set()
+    result = []
+    for path in paths:
+        key = os.path.normcase(os.path.abspath(str(path)))
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def _read_opencode_zen_json_key(path: Path) -> tuple[str, str] | None:
+    try:
+        auth = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if not isinstance(auth, dict):
+        return None
+    for provider_id in ("opencode-go", "opencode", "opencode-zen"):
+        entry = auth.get(provider_id)
+        if not isinstance(entry, dict) or entry.get("type") not in (None, "api", "api_key"):
+            continue
+        for key_name in ("key", "apiKey", "api_key"):
+            value = entry.get(key_name)
+            if isinstance(value, str) and value.strip():
+                return value.strip(), provider_id
+    return None
+
+
+def _read_omp_zen_key(path: Path) -> str | None:
+    if not path.is_file():
+        return None
+    conn = None
+    try:
+        conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=1)
+        columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(auth_credentials)").fetchall()
+            if len(row) > 1
+        }
+        if not {"provider", "credential_type", "data"}.issubset(columns):
+            return None
+        sql = "SELECT credential_type, data FROM auth_credentials WHERE provider = ?"
+        if "disabled_cause" in columns:
+            sql += " AND disabled_cause IS NULL"
+        if "id" in columns:
+            sql += " ORDER BY id DESC"
+        for credential_type, data in conn.execute(sql, ("opencode-zen",)).fetchall():
+            if credential_type != "api_key" or not isinstance(data, str):
+                continue
+            try:
+                parsed = json.loads(data)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(parsed, dict):
+                for key_name in ("key", "apiKey", "api_key"):
+                    value = parsed.get(key_name)
+                    if isinstance(value, str) and value.strip():
+                        return value.strip()
+    except (OSError, sqlite3.Error):
+        return None
+    finally:
+        if conn is not None:
+            try:
+                conn.close()
+            except sqlite3.Error:
+                pass
+    return None
+
+
+def get_opencode_go_credentials() -> dict | None:
+    """Auto-discover an already configured OpenCode Go API key.
+
+    No login is initiated and no auth file is changed.
+    """
+    for env_name in ("OPENCODE_GO_API_KEY", "OPENCODE_API_KEY"):
+        value = os.environ.get(env_name)
+        if value and value.strip():
+            return {
+                "key": value.strip(),
+                "source": "$" + env_name,
+                "provider_id": "opencode-go",
+            }
+
+    # OpenCode supports injecting the complete auth store via this environment
+    # variable; honor it before touching disk.
+    if raw := os.environ.get("OPENCODE_AUTH_CONTENT"):
+        try:
+            parsed = json.loads(raw)
+        except json.JSONDecodeError:
+            parsed = None
+        if extracted := _extract_opencode_go_credential(parsed):
+            key, provider_id = extracted
+            return {
+                "key": key,
+                "source": "$OPENCODE_AUTH_CONTENT",
+                "provider_id": provider_id,
+            }
+
+    for path in _opencode_auth_paths():
+        try:
+            parsed = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            continue
+
+        if extracted := _extract_opencode_go_credential(parsed):
+            key, provider_id = extracted
+            return {
+                "key": key,
+                # Keep local filesystem paths private. The source label is
+                # sufficient for normal CLI/JSON/cache output.
+                "source": "OpenCode auth.json",
+                "provider_id": provider_id,
+            }
+
+    # Pi and Oh My Pi reuse the same OpenCode/Zen workspace key. Read those
+    # stores as additional zero-config sources so a valid Zen key can be
+    # distinguished from a missing Go entitlement on the Go-only command.
+    for path in _pi_auth_paths():
+        if extracted := _read_opencode_zen_json_key(path):
+            key, provider_id = extracted
+            return {
+                "key": key,
+                "source": "Pi auth.json",
+                "provider_id": provider_id,
+            }
+
+    for agent_dir in _omp_agent_dirs():
+        if key := _read_omp_zen_key(agent_dir / "agent.db"):
+            return {
+                "key": key,
+                "source": "OMP agent.db",
+                "provider_id": "opencode-zen",
+            }
+
+    return None
+
+
+def _opencode_go_number(record: dict, keys: tuple[str, ...]) -> float | None:
+    for key in keys:
+        value = record.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            number = float(value)
+        elif isinstance(value, str):
+            try:
+                number = float(value.strip())
+            except ValueError:
+                continue
+        else:
+            continue
+        if number == number and number not in (float("inf"), float("-inf")):
+            return number
+    return None
+
+
+def _opencode_go_reset_iso(value: object) -> str | None:
+    """Normalize an ISO/epoch reset value so existing reset formatting works."""
+    if value is None:
+        return None
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        stamp = float(value)
+        if stamp > 1_000_000_000_000:
+            stamp /= 1000.0
+        if stamp > 1_000_000_000:
+            try:
+                return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat()
+            except (OverflowError, OSError, ValueError):
+                return None
+        return None
+    if isinstance(value, str) and value.strip():
+        text = value.strip()
+        try:
+            numeric = float(text)
+        except ValueError:
+            return text
+        return _opencode_go_reset_iso(numeric)
+    return None
+
+
+def _normalize_opencode_go_window(record: object, label: str) -> dict | None:
+    if not isinstance(record, dict):
+        return None
+
+    used = _opencode_go_number(
+        record,
+        ("percent", "percentUsed", "usedPercent", "usagePercent", "utilization"),
+    )
+    remaining = _opencode_go_number(
+        record,
+        ("percentRemaining", "remainingPercent"),
+    )
+
+    if used is None and remaining is None:
+        return None
+    if used is None:
+        used = 100.0 - float(remaining)
+    if remaining is None:
+        remaining = 100.0 - float(used)
+
+    used = max(0.0, min(100.0, float(used)))
+    remaining = max(0.0, min(100.0, float(remaining)))
+
+    result = {
+        "window": label,
+        "used": f"{used:.1f}%",
+        "remaining": f"{remaining:.1f}%",
+    }
+
+    reset = None
+    for key in ("resetsAt", "resetAt", "reset_at", "nextResetTime", "renewAt"):
+        if key in record:
+            reset = _opencode_go_reset_iso(record.get(key))
+            if reset:
+                break
+    if reset:
+        result["resets_at"] = reset
+        result["resets_in"] = format_reset_time(reset)
+
+    window_seconds = _opencode_go_number(
+        record,
+        ("windowSeconds", "window_seconds", "durationSeconds", "duration_seconds"),
+    )
+    if window_seconds and window_seconds > 0:
+        result["window_seconds"] = int(window_seconds)
+
+    return result
+
+
+def get_opencode_go_usage() -> dict:
+    """Fetch authoritative OpenCode Go rolling/weekly/monthly subscription usage."""
+    creds = get_opencode_go_credentials()
+    if not creds:
+        return {
+            "error": NO_CREDS_ERROR,
+            "hint": "Connect OpenCode Go in OpenCode first; cclimits will reuse its existing auth.json automatically",
+        }
+
+    headers = {
+        "Authorization": f"Bearer {creds['key']}",
+        "Accept": "application/json",
+        "User-Agent": "cclimits",
+    }
+    status, data = http_get(OPENCODE_GO_USAGE_URL, headers)
+
+    if status == 401:
+        return {
+            "error": "Invalid API key",
+            "hint": "OpenCode Go credential was rejected; reconnect OpenCode Go in OpenCode",
+        }
+    if status == 403:
+        return {
+            "error": OPENCODE_GO_NO_SUB_ERROR,
+            "hint": "The discovered OpenCode key does not have an active Go entitlement",
+        }
+    if status == 429:
+        return {"error": "Rate limited", "hint": "OpenCode Go usage endpoint returned HTTP 429"}
+    if status != 200 or not isinstance(data, dict):
+        return {
+            "error": f"HTTP {status}" if status else "Could not fetch usage",
+            "details": "OpenCode Go usage endpoint returned no usable response",
+        }
+
+    usage = data.get("usage")
+    if not isinstance(usage, dict):
+        return {"error": "Could not parse usage", "details": "Missing usage object"}
+
+    rolling = _normalize_opencode_go_window(usage.get("rolling"), "5h")
+    weekly = _normalize_opencode_go_window(usage.get("weekly"), "7d")
+    monthly = _normalize_opencode_go_window(usage.get("monthly"), "monthly")
+
+    if not any((rolling, weekly, monthly)):
+        return {"error": "Could not parse usage", "details": "No quota windows found"}
+
+    result: dict = {
+        "status": "ok",
+        "source": "opencode_go_api",
+        "auth": creds["source"],
+        "plan": data.get("planName") or data.get("plan_name") or data.get("plan") or "OpenCode Go",
+    }
+    if rolling:
+        result["primary_window"] = rolling
+    if weekly:
+        result["secondary_window"] = weekly
+    if monthly:
+        result["monthly_window"] = monthly
+    return result
 
 ### OpenRouter Functions
 
@@ -2167,6 +2552,16 @@ def print_section(name: str, data: dict):
         if "resets_in" in sw:
             print(f"    Resets in: {sw['resets_in']}")
 
+    if "monthly_window" in data:
+        mw = data["monthly_window"]
+        window = mw.get("window", "monthly")
+        print(f"\n  {window.capitalize()} Window:")
+        print(f"    Used:      {mw['used']}")
+        if "remaining" in mw:
+            print(f"    Remaining: {mw['remaining']}")
+        if "resets_in" in mw:
+            print(f"    Resets in: {mw['resets_in']}")
+
     if "code_review" in data:
         cr = data["code_review"]
         print(f"\n  Code Review Quota: {cr['used']} used")
@@ -2569,13 +2964,17 @@ PROVIDERS = [
      "arg_help": "Only check Codex", "fetch": "get_codex_usage",
      "gated": False, "creds": None, "oneline_order": 1,
      "render_oneline": _make_str_pct_renderer("Codex", lambda d: d.get("status") == "ok", "primary_window", "secondary_window")},
+    {"key": "opencode_go", "cli": "opencode-go", "title": "OpenCode Go", "oneline_label": "OpenCode Go",
+     "arg_help": "Only check OpenCode Go", "fetch": "get_opencode_go_usage",
+     "gated": True, "creds": "get_opencode_go_credentials", "oneline_order": 2,
+     "render_oneline": _make_str_pct_renderer("OpenCode Go", lambda d: d.get("status") == "ok", "primary_window", "secondary_window")},
     {"key": "gemini", "title": "Gemini CLI", "oneline_label": "Gemini",
      "arg_help": "Only check Gemini", "fetch": "get_gemini_usage",
-     "gated": False, "creds": None, "oneline_order": 4,
+     "gated": False, "creds": None, "oneline_order": 5,
      "render_oneline": _render_gemini},
     {"key": "zai", "title": "Z.AI (5h shared - GLM-4.x)", "oneline_label": "Z.AI",
      "arg_help": "Only check Z.AI", "fetch": "get_zai_usage",
-     "gated": False, "creds": None, "oneline_order": 2,
+     "gated": False, "creds": None, "oneline_order": 3,
      "render_oneline": _render_zai},
     {"key": "openrouter", "title": "OpenRouter", "oneline_label": "OpenRouter",
      "arg_help": "Only check OpenRouter", "fetch": "get_openrouter_usage",
@@ -2591,7 +2990,7 @@ PROVIDERS = [
      "render_oneline": _render_antigravity},
     {"key": "synthetic", "title": "Synthetic.new", "oneline_label": "Synthetic",
      "arg_help": "Only check Synthetic.new", "fetch": "get_synthetic_usage",
-     "gated": True, "creds": "get_synthetic_credentials", "oneline_order": 3,
+     "gated": True, "creds": "get_synthetic_credentials", "oneline_order": 4,
      "render_oneline": _render_synthetic},
     {"key": "copilot", "title": "GitHub Copilot", "oneline_label": "Copilot",
      "arg_help": "Only check GitHub Copilot", "fetch": "get_copilot_usage",
@@ -2615,6 +3014,8 @@ def print_oneline(results: dict, window: str = "5h", use_color: bool = False, ca
         """Missing credentials / expired tokens are config issues, not outages — show them differently"""
         if data.get("error") == NO_CREDS_ERROR:
             return nokey_icon
+        if data.get("error") == OPENCODE_GO_NO_SUB_ERROR:
+            return "no subscription"
         if data.get("token_status") == "expired" or data.get("error") == "Token expired":
             return expired_icon
         return error_icon
@@ -2659,6 +3060,7 @@ Credential Locations (auto-discovered):
   Antigravity system keyring, or $ANTIGRAVITY_REFRESH_TOKEN
   Synthetic  $SYNTHETIC_API_KEY environment variable
   Copilot    ~/.config/github-copilot/apps.json, gh CLI hosts.yml, or $GITHUB_TOKEN
+  OpenCode Go $XDG_DATA_HOME/opencode/auth.json or ~/.local/share/opencode/auth.json
 
 Setup (one-time):
   claude           # Login to Claude Code
@@ -2676,6 +3078,7 @@ Examples:
   cclimits --antigravity # Antigravity only
   cclimits --synthetic  # Synthetic.new only
   cclimits --copilot    # GitHub Copilot only
+  cclimits --opencode-go # OpenCode Go only
   cclimits --json       # JSON output
   cclimits --oneline      # Compact one-liner (5h window)
   cclimits --oneline 7d   # Compact one-liner (7d window)
@@ -2688,7 +3091,7 @@ Example Output:
 """
 
     parser = argparse.ArgumentParser(
-        description="Check AI CLI usage/quota for Claude, Codex, Gemini, Z.AI, OpenRouter, Kimi, Antigravity, Synthetic.new, GitHub Copilot",
+        description="Check AI CLI usage/quota for Claude, Codex, OpenCode Go, Gemini, Z.AI, OpenRouter, Kimi, Antigravity, Synthetic.new, GitHub Copilot",
         epilog=epilog,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
@@ -2700,7 +3103,12 @@ Example Output:
     parser.add_argument("--resets", "--timeremaining", action="store_true", dest="resets",
                         help="Append reset countdowns (↻2h15m) to --oneline output")
     for _p in PROVIDERS:
-        parser.add_argument(f"--{_p['key']}", action="store_true", help=_p["arg_help"])
+        parser.add_argument(
+            f"--{_p.get('cli', _p['key'])}",
+            dest=_p["key"],
+            action="store_true",
+            help=_p["arg_help"],
+        )
     parser.add_argument("--cached", action="store_true", help="Use cached data if fresh (< TTL), fetch if stale")
     parser.add_argument("--cache-ttl", type=int, metavar="SECONDS",
                         help="Override default TTL (default: 60, implies --cached)")
@@ -2805,6 +3213,12 @@ Example Output:
     # surface it.
     if check_all and not args.json and results.get("copilot", {}).get("error") == COPILOT_NO_SUB_ERROR:
         del results["copilot"]
+
+    # A generic OpenCode/Zen key can exist without a Go subscription. Keep
+    # check-all quiet in that case; explicit --opencode-go and --json still
+    # report the entitlement state.
+    if check_all and not args.json and results.get("opencode_go", {}).get("error") == OPENCODE_GO_NO_SUB_ERROR:
+        del results["opencode_go"]
 
     if args.json:
         print(json.dumps(results, indent=2))
